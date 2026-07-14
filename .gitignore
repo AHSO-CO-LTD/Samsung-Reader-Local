@@ -11,6 +11,9 @@ db/local_db_config.json
 server/server_config.json
 reader/readers_config.json
 
+# Legacy .NET SDK approach
+legacy_dotnet_sdk_approach/
+
 # Editor / OS
 .vscode/
 Thumbs.db

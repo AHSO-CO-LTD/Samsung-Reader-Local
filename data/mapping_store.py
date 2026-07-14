@@ -1,54 +1,53 @@
-# Dữ liệu mapping TẠM THỜI (mock), thay cho việc lấy từ server (chưa kết nối).
-# Khi nối server thật, chỉ cần thay nội dung load_mappings() để đọc từ server,
-# giữ nguyên cấu trúc dict trả về (các key bên dưới) để không phải sửa code gọi nó.
+# Đọc danh sách profile ĐANG ACTIVE từ profile_cache + profile_led_code_cache
+# (đã đồng bộ qua GET /api/machines/config — xem db/local_db.py:apply_machine_config).
+# Giữ NGUYÊN cấu trúc dict trả về như bản mock cũ (profile_id, chassis_rear,
+# led1, led2, length_led, length_bottom, no_led, no_bottom, factory_code) để
+# ui/main_window.py không cần sửa gì.
 
-_MOCK_MAPPINGS = [
-    {
-        "profile_id": 1,
-        "chassis_rear": "BN96-58285A",
-        "led1": "BN96-60376A",
-        "led2": "BN96-60377A",
-        "length_led": 22,
-        "length_bottom": 35,
-        "no_led": 16,
-        "no_bottom": 18,
-        "factory_code": "DZLV",
-    },
-    {
-        "profile_id": 2,
-        "chassis_rear": "BN96-60875C",
-        "led1": "BN96-60374A",
-        "led2": "",
-        "length_led": 22,
-        "length_bottom": 35,
-        "no_led": 16,
-        "no_bottom": 18,
-        "factory_code": "DZLV",
-    },
-    {
-        "profile_id": 3,
-        "chassis_rear": "BN96-58578A",
-        "led1": "BN96-58291A",
-        "led2": "BN96-58289A",
-        "length_led": 22,
-        "length_bottom": 35,
-        "no_led": 16,
-        "no_bottom": 18,
-        "factory_code": "DZLV",
-    },
-    {
-        "profile_id": 4,
-        "chassis_rear": "BN96-60877C",
-        "led1": "BN96-60376A",
-        "led2": "BN96-60377A",
-        "length_led": 22,
-        "length_bottom": 35,
-        "no_led": 16,
-        "no_bottom": 18,
-        "factory_code": "DZLV",
-    },
-]
+from db.local_db import get_connection
 
 
 def load_mappings():
-    return _MOCK_MAPPINGS
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT profile_id, chassis_code_full, factory_code,
+                       full_code_length, full_vendor_position,
+                       led_scan_length, led_vendor_position
+                FROM profile_cache WHERE is_active = true ORDER BY profile_id
+                """
+            )
+            profile_rows = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT profile_id, led_slot, code_full
+                FROM profile_led_code_cache
+                WHERE is_active = true ORDER BY profile_id, led_slot
+                """
+            )
+            led_rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    led_by_profile = {}
+    for profile_id, led_slot, code_full in led_rows:
+        led_by_profile.setdefault(profile_id, {})[led_slot] = code_full
+
+    return [
+        {
+            "profile_id": profile_id,
+            "chassis_rear": chassis_code_full,
+            "led1": led_by_profile.get(profile_id, {}).get(1, ""),
+            "led2": led_by_profile.get(profile_id, {}).get(2, ""),
+            "length_led": led_scan_length,
+            "length_bottom": full_code_length,
+            "no_led": led_vendor_position,
+            "no_bottom": full_vendor_position,
+            "factory_code": factory_code,
+        }
+        for profile_id, chassis_code_full, factory_code, full_code_length,
+            full_vendor_position, led_scan_length, led_vendor_position in profile_rows
+    ]

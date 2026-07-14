@@ -66,4 +66,6 @@ class ServerWorker(QThread):
             return self._client.get_registration_status(**kwargs)
         if job_kind == "identity_status":
             return self._client.get_identity_status(**kwargs)
+        if job_kind == "config":
+            return self._client.get_machine_config(**kwargs)
         raise ValueError(f"Không hỗ trợ job_kind: {job_kind}")

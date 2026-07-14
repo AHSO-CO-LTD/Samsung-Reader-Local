@@ -150,6 +150,191 @@ def add_local_notification(
         conn.close()
 
 
+def apply_machine_config(data, serial, uid):
+    """Ghi cache từ 1 response GET /api/machines/config (data.machine/settings/
+    profiles/vendors/pending_commands) — coi server là nguồn chân lý.
+
+    machine_cache/server_settings_cache: UPSERT 1 dòng (singleton/theo
+    machine_code). profile_cache/profile_led_code_cache: UPSERT theo
+    profile_id/(profile_id, led_slot) + soft-delete (is_active=false) cho
+    dòng KHÔNG còn trong response — KHÔNG DELETE thật vì
+    local_scan_records.profile_id có FK ON DELETE RESTRICT tới profile_cache,
+    xoá thật sẽ vi phạm FK nếu profile đó đã từng có scan. vendor_cache:
+    UPSERT theo vendor_char. command_inbox: chỉ INSERT command MỚI (ON
+    CONFLICT DO NOTHING) — không đụng ack/local_status cục bộ của command đã
+    có; xử lý/ack thật sự là việc của bước commands/poll sau."""
+    machine = data.get("machine") or {}
+    settings = data.get("settings") or {}
+    profiles = data.get("profiles") or []
+    vendors = data.get("vendors") or []
+    pending_commands = data.get("pending_commands") or []
+    now = datetime.now().astimezone()
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO machine_cache (
+                    machine_code, server_machine_id, machine_name, serial, uid,
+                    line_name, station_name, ip_address, is_active, raw_json, synced_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (machine_code) DO UPDATE SET
+                    server_machine_id = EXCLUDED.server_machine_id,
+                    machine_name = EXCLUDED.machine_name,
+                    serial = EXCLUDED.serial, uid = EXCLUDED.uid,
+                    line_name = EXCLUDED.line_name, station_name = EXCLUDED.station_name,
+                    ip_address = EXCLUDED.ip_address, is_active = EXCLUDED.is_active,
+                    raw_json = EXCLUDED.raw_json, synced_at = EXCLUDED.synced_at,
+                    updated_at = now()
+                """,
+                (
+                    machine.get("machine_code"), machine.get("id"), machine.get("machine_name"),
+                    serial, uid, machine.get("line_name"), machine.get("station_name"),
+                    machine.get("ip_address"), machine.get("is_active", True),
+                    json.dumps(machine), now,
+                ),
+            )
+
+            cur.execute(
+                """
+                INSERT INTO server_settings_cache (
+                    id, factory_code_default, full_code_length_default, full_vendor_position_default,
+                    led_scan_length_default, led_vendor_position_default, duplicate_days,
+                    heartbeat_timeout_seconds, raw_json, synced_at
+                ) VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    factory_code_default = EXCLUDED.factory_code_default,
+                    full_code_length_default = EXCLUDED.full_code_length_default,
+                    full_vendor_position_default = EXCLUDED.full_vendor_position_default,
+                    led_scan_length_default = EXCLUDED.led_scan_length_default,
+                    led_vendor_position_default = EXCLUDED.led_vendor_position_default,
+                    duplicate_days = EXCLUDED.duplicate_days,
+                    heartbeat_timeout_seconds = EXCLUDED.heartbeat_timeout_seconds,
+                    raw_json = EXCLUDED.raw_json, synced_at = EXCLUDED.synced_at,
+                    updated_at = now()
+                """,
+                (
+                    settings.get("factory_code_default"), settings.get("full_code_length_default"),
+                    settings.get("full_vendor_position_default"), settings.get("led_scan_length_default"),
+                    settings.get("led_vendor_position_default"), settings.get("duplicate_days"),
+                    settings.get("heartbeat_timeout_seconds"), json.dumps(settings), now,
+                ),
+            )
+
+            seen_profile_ids = []
+            for p in profiles:
+                profile_id = p.get("id")
+                seen_profile_ids.append(profile_id)
+                chassis = p.get("chassis_code") or {}
+                cur.execute(
+                    """
+                    INSERT INTO profile_cache (
+                        profile_id, version, chassis_code_id, chassis_code_full, chassis_code_input,
+                        factory_code, full_code_length, full_vendor_position,
+                        led_scan_length, led_vendor_position, is_active, raw_json, synced_at
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (profile_id) DO UPDATE SET
+                        version = EXCLUDED.version, chassis_code_id = EXCLUDED.chassis_code_id,
+                        chassis_code_full = EXCLUDED.chassis_code_full,
+                        chassis_code_input = EXCLUDED.chassis_code_input,
+                        factory_code = EXCLUDED.factory_code, full_code_length = EXCLUDED.full_code_length,
+                        full_vendor_position = EXCLUDED.full_vendor_position,
+                        led_scan_length = EXCLUDED.led_scan_length,
+                        led_vendor_position = EXCLUDED.led_vendor_position,
+                        is_active = EXCLUDED.is_active, raw_json = EXCLUDED.raw_json,
+                        synced_at = EXCLUDED.synced_at, updated_at = now()
+                    """,
+                    (
+                        profile_id, p.get("version"), p.get("chassis_code_id"),
+                        chassis.get("code_full"), chassis.get("code_input"),
+                        p.get("factory_code"), p.get("full_code_length"), p.get("full_vendor_position"),
+                        p.get("led_scan_length"), p.get("led_vendor_position"),
+                        p.get("is_active", True), json.dumps(p), now,
+                    ),
+                )
+
+                seen_slots = []
+                for plc in (p.get("profile_led_codes") or []):
+                    led_slot = plc.get("led_slot")
+                    seen_slots.append(led_slot)
+                    led_code = plc.get("led_code") or {}
+                    cur.execute(
+                        """
+                        INSERT INTO profile_led_code_cache (
+                            profile_id, led_slot, led_code_id, code_full, code_input,
+                            suffix_check, is_required, is_active, raw_json, synced_at
+                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (profile_id, led_slot) DO UPDATE SET
+                            led_code_id = EXCLUDED.led_code_id, code_full = EXCLUDED.code_full,
+                            code_input = EXCLUDED.code_input, suffix_check = EXCLUDED.suffix_check,
+                            is_required = EXCLUDED.is_required, is_active = EXCLUDED.is_active,
+                            raw_json = EXCLUDED.raw_json, synced_at = EXCLUDED.synced_at,
+                            updated_at = now()
+                        """,
+                        (
+                            profile_id, led_slot, led_code.get("id"), led_code.get("code_full"),
+                            led_code.get("code_input"), led_code.get("suffix_check"),
+                            plc.get("is_required", True), led_code.get("is_active", True),
+                            json.dumps(plc), now,
+                        ),
+                    )
+
+                if seen_slots:
+                    cur.execute(
+                        """
+                        UPDATE profile_led_code_cache SET is_active = false, updated_at = now()
+                        WHERE profile_id = %s AND NOT (led_slot = ANY(%s))
+                        """,
+                        (profile_id, seen_slots),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE profile_led_code_cache SET is_active = false, updated_at = now() WHERE profile_id = %s",
+                        (profile_id,),
+                    )
+
+            if seen_profile_ids:
+                cur.execute(
+                    "UPDATE profile_cache SET is_active = false, updated_at = now() WHERE NOT (profile_id = ANY(%s))",
+                    (seen_profile_ids,),
+                )
+            else:
+                cur.execute("UPDATE profile_cache SET is_active = false, updated_at = now()")
+
+            for v in vendors:
+                cur.execute(
+                    """
+                    INSERT INTO vendor_cache (vendor_id, vendor_name, vendor_char, status, raw_json, synced_at)
+                    VALUES (%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (vendor_char) DO UPDATE SET
+                        vendor_id = EXCLUDED.vendor_id, vendor_name = EXCLUDED.vendor_name,
+                        status = EXCLUDED.status, raw_json = EXCLUDED.raw_json,
+                        synced_at = EXCLUDED.synced_at, updated_at = now()
+                    """,
+                    (v.get("id"), v.get("vendor_name"), v.get("vendor_char"), v.get("status"),
+                     json.dumps(v), now),
+                )
+
+            for c in pending_commands:
+                cur.execute(
+                    """
+                    INSERT INTO command_inbox (
+                        server_command_id, machine_code, command_type, payload_json,
+                        local_status, received_at
+                    ) VALUES (%s, %s, %s, %s, 'PENDING', %s)
+                    ON CONFLICT (server_command_id) DO NOTHING
+                    """,
+                    (
+                        c.get("id"), machine.get("machine_code"), c.get("command_type"),
+                        json.dumps(c.get("payload_json") or {}), now,
+                    ),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_machine_code():
     """Đọc machine_code hiện tại từ local_app_settings (singleton, id=1).
     Trả về 'LOCAL01' nếu bảng chưa được seed (chưa chạy local_app_settings)."""

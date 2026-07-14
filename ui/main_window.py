@@ -10,7 +10,9 @@ from PyQt5.QtWidgets import (
 
 from data.duplicate_key import compute_duplicate_key
 from data.mapping_store import load_mappings
-from db.local_db import add_local_notification, get_app_settings, record_full_scan, update_app_settings
+from db.local_db import (
+    add_local_notification, apply_machine_config, get_app_settings, record_full_scan, update_app_settings,
+)
 from machine.identity import ensure_machine_identity
 from reader.reader_bridge import ReaderManager
 from reader.reader_store import load_readers
@@ -267,6 +269,8 @@ class MainWindow(QMainWindow):
             self._apply_server_online(True)
         elif job_kind == "identity_status":
             self._handle_identity_status_result(data)
+        elif job_kind == "config":
+            self._handle_config_result(data)
 
     def _on_server_call_failed(self, job_kind, correlation_id, error_message, payload):
         if job_kind == "health":
@@ -287,6 +291,18 @@ class MainWindow(QMainWindow):
                 self._apply_runtime_status("BLOCKED", message)
             else:
                 self._append_log(f"[{self._now()}] [Định danh máy] Lỗi mạng khi kiểm tra định danh: {error_message}")
+        elif job_kind == "config":
+            code = payload.get("code")
+            if code in ("MACHINE_NOT_FOUND", "MACHINE_IDENTITY_MISMATCH"):
+                message = f"Config load failed: {code}"
+                update_app_settings(
+                    local_runtime_status="BLOCKED", local_status_message=message,
+                    local_status_updated_at=datetime.now().astimezone(),
+                )
+                self._append_log(f"[{self._now()}] [Config] {message}")
+                self._apply_runtime_status("BLOCKED", message)
+            else:
+                self._append_log(f"[{self._now()}] [Config] Lỗi mạng khi tải cấu hình: {error_message}")
 
     def _handle_identity_status_result(self, response):
         code = response.get("code")
@@ -302,6 +318,7 @@ class MainWindow(QMainWindow):
                 local_status_updated_at=now,
             )
             self._apply_runtime_status("READY", message)
+            self._check_machine_config()
         elif code == "MACHINE_REGISTER_PENDING":
             waiting = "WAITING_APPROVAL" if data.get("license_activated_at") else "WAITING_LICENSE"
             message = (
@@ -335,6 +352,41 @@ class MainWindow(QMainWindow):
             self._apply_runtime_status("BLOCKED", message)
         else:
             self._append_log(f"[{self._now()}] [Định danh máy] Phản hồi không xác định: {code} — {response.get('message')}")
+
+    def _check_machine_config(self):
+        self.server_worker.enqueue("config", serial=self._serial, uid=self._uid)
+
+    def _handle_config_result(self, response):
+        code = response.get("code")
+        data = response.get("data") or {}
+        now = datetime.now().astimezone()
+
+        if code != "MACHINE_CONFIG_LOADED":
+            self._append_log(f"[{self._now()}] [Config] Phản hồi không xác định: {code} — {response.get('message')}")
+            return
+
+        apply_machine_config(data, self._serial, self._uid)
+        update_app_settings(last_config_sync_at=now)
+        self._load_mappings()
+
+        profiles = data.get("profiles") or []
+        vendors = data.get("vendors") or []
+        if not profiles:
+            message = "No active profile assigned to this machine on the server."
+            update_app_settings(
+                local_runtime_status="BLOCKED", local_status_message=message,
+                local_status_updated_at=now,
+            )
+            add_local_notification("LOCAL_PROFILE_EMPTY", "CRITICAL", "Thiếu profile", message)
+            self._append_log(f"[{self._now()}] [Config] {message}")
+            self._apply_runtime_status("BLOCKED", message)
+        else:
+            self._append_log(f"[{self._now()}] [Config] Đồng bộ thành công: {len(profiles)} profile, {len(vendors)} vendor.")
+            add_local_notification(
+                "LOCAL_CONFIG_SYNCED", "INFO", "Đã đồng bộ cấu hình",
+                f"{len(profiles)} profile, {len(vendors)} vendor.",
+            )
+            self._apply_runtime_status("READY", "Machine is READY.")
 
     def _apply_runtime_status(self, status, message=None):
         """Điểm trung tâm gate màn scan chính theo local_runtime_status —
@@ -480,6 +532,7 @@ class MainWindow(QMainWindow):
     def _load_mappings(self):
         entries = load_mappings()
         self._mappings_by_chassis = {e["chassis_rear"]: e for e in entries}
+        self.comboBoxChassisRear.clear()
         self.comboBoxChassisRear.addItems(list(self._mappings_by_chassis.keys()))
 
     def on_chassis_rear_changed(self, code):
@@ -489,6 +542,7 @@ class MainWindow(QMainWindow):
         self.labelLedBar1RefCode.setText(entry["led1"] or "-")
         self.labelLedBar2RefCode.setText(entry["led2"] or "-")
         self.labelQrBottomRefCode.setText(code)
+        update_app_settings(active_profile_id=entry.get("profile_id"))
 
     ######################################################################
     # Nạp danh sách reader đã lưu (JSON) lúc khởi động

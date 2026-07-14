@@ -1,11 +1,18 @@
 """
-Sinh dữ liệu mẫu cho ĐỦ 16 bảng trong db/schema.sql — vì project chưa kết nối
-server thật, toàn bộ dữ liệu ở đây là TỰ BỊA (mock) dựa theo cách hiểu hiện có
-về project (data/mapping_store.py, ui/main_window.py, machine/hardware_id.py),
-không phải dữ liệu đã từng gọi server thật.
+Sinh dữ liệu mẫu cho các bảng CHƯA được đồng bộ thật (local_scan_records,
+sync_batches, command_inbox demo, local_notifications, api_request_logs,
+app_event_logs) — dữ liệu TỰ BỊA (mock), không phải dữ liệu đã từng gọi
+server thật.
 
-Luôn TRUNCATE toàn bộ bảng trước khi sinh lại — chạy lại bao nhiêu lần cũng
-ra kết quả giống nhau.
+profile_cache/profile_led_code_cache/vendor_cache/machine_cache/
+server_settings_cache giờ là dữ liệu THẬT (đồng bộ qua GET /api/machines/config
+— xem db/local_db.py:apply_machine_config) nên KHÔNG còn bị TRUNCATE ở đây —
+script chỉ ĐẢM BẢO 4 profile mẫu (_MOCK_MAPPINGS) tồn tại (ON CONFLICT DO
+NOTHING) để phần sinh local_scan_records mẫu bên dưới có profile_id hợp lệ để
+tham chiếu, không ghi đè config thật nếu máy đã từng đồng bộ với server.
+
+Luôn TRUNCATE các bảng còn lại trước khi sinh lại — chạy lại bao nhiêu lần
+cũng ra kết quả giống nhau (trừ 5 bảng cache nói trên).
 
 Cách dùng (chạy từ thư mục gốc project, dạng module vì import absolute):
     python -m db.seed_full_schema
@@ -16,11 +23,61 @@ import uuid
 from datetime import datetime, timedelta
 
 from data.duplicate_key import compute_duplicate_key
-from data.mapping_store import load_mappings
 from db.local_db import get_connection, init_schema
 from machine.hardware_id import get_hardware_id
 
 MACHINE_CODE = "LOCAL01"
+
+# Copy từ data/mapping_store.py trước khi module đó chuyển sang đọc DB thật
+# (Bước 4: GET /api/machines/config) — script này không thể phụ thuộc vòng
+# vào load_mappings() nữa vì hàm đó giờ đọc chính bảng profile_cache mà
+# script cần đảm bảo tồn tại trước.
+_MOCK_MAPPINGS = [
+    {
+        "profile_id": 1,
+        "chassis_rear": "BN96-58285A",
+        "led1": "BN96-60376A",
+        "led2": "BN96-60377A",
+        "length_led": 22,
+        "length_bottom": 35,
+        "no_led": 16,
+        "no_bottom": 18,
+        "factory_code": "DZLV",
+    },
+    {
+        "profile_id": 2,
+        "chassis_rear": "BN96-60875C",
+        "led1": "BN96-60374A",
+        "led2": "",
+        "length_led": 22,
+        "length_bottom": 35,
+        "no_led": 16,
+        "no_bottom": 18,
+        "factory_code": "DZLV",
+    },
+    {
+        "profile_id": 3,
+        "chassis_rear": "BN96-58578A",
+        "led1": "BN96-58291A",
+        "led2": "BN96-58289A",
+        "length_led": 22,
+        "length_bottom": 35,
+        "no_led": 16,
+        "no_bottom": 18,
+        "factory_code": "DZLV",
+    },
+    {
+        "profile_id": 4,
+        "chassis_rear": "BN96-60877C",
+        "led1": "BN96-60376A",
+        "led2": "BN96-60377A",
+        "length_led": 22,
+        "length_bottom": 35,
+        "no_led": 16,
+        "no_bottom": 18,
+        "factory_code": "DZLV",
+    },
+]
 
 
 def _strip_prefix(code_full):
@@ -42,7 +99,7 @@ def main():
     machine_serial = hw["motherboard_serial"] or "SN-DEV-UNKNOWN"
     machine_uid = hw["bios_uuid"] or "UID-DEV-UNKNOWN"
 
-    mappings = load_mappings()
+    mappings = _MOCK_MAPPINGS
 
     now = datetime.now()
     yesterday_9am = (now - timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
@@ -52,13 +109,15 @@ def main():
     try:
         with conn.cursor() as cur:
             # Xoá sạch toàn bộ để sinh lại nhất quán (thứ tự theo FK con -> cha).
+            # KHÔNG truncate profile_led_code_cache/profile_cache/vendor_cache/
+            # machine_cache/server_settings_cache — giờ là dữ liệu THẬT đồng bộ
+            # từ server (xem apply_machine_config), truncate sẽ xoá mất.
             cur.execute("""
                 TRUNCATE
                     api_request_logs, app_event_logs, local_notifications,
                     sync_batch_items, sync_batches, command_inbox,
                     local_duplicate_keys, local_scan_led_items, local_scan_records,
-                    profile_led_code_cache, profile_cache, vendor_cache, machine_cache,
-                    server_settings_cache, local_app_settings, id_counters
+                    local_app_settings, id_counters
             """)
 
             # ---------- local_app_settings (singleton, id=1) ----------
@@ -80,8 +139,8 @@ def main():
             )
 
             # ---------- server_settings_cache (singleton, id=1) ----------
-            # Đây là giá trị MẶC ĐỊNH local tự dùng tạm (synced_at=NULL vì chưa
-            # từng đồng bộ thật) — khi có server, cột synced_at sẽ được set.
+            # ON CONFLICT DO NOTHING — nếu máy đã từng đồng bộ config thật
+            # (apply_machine_config), giữ nguyên dữ liệu thật, không ghi đè.
             cur.execute(
                 """
                 INSERT INTO server_settings_cache (
@@ -91,6 +150,7 @@ def main():
                 ) VALUES (
                     1, 'DZLV', 35, 18, 22, 16, 30, 60, %s, NULL
                 )
+                ON CONFLICT (id) DO NOTHING
                 """,
                 (json.dumps({"note": "gia tri mac dinh local tu dat, chua tung sync tu server"}),),
             )
@@ -105,6 +165,7 @@ def main():
                     %s, NULL, 'LED/QR Scanner - Line A', %s, %s,
                     'LINE-A', 'ST-01', '127.0.0.1', true, NULL
                 )
+                ON CONFLICT (machine_code) DO NOTHING
                 """,
                 (MACHINE_CODE, machine_serial, machine_uid),
             )
@@ -117,10 +178,14 @@ def main():
                 """
                 INSERT INTO vendor_cache (vendor_id, vendor_name, vendor_char, status, synced_at)
                 VALUES (1, 'Default LED Vendor', 'L', 'ACTIVE', NULL)
+                ON CONFLICT (vendor_char) DO NOTHING
                 """
             )
 
             # ---------- profile_cache + profile_led_code_cache ----------
+            # ON CONFLICT DO NOTHING — chỉ đảm bảo 4 profile mẫu TỒN TẠI (để
+            # phần sinh local_scan_records bên dưới có profile_id hợp lệ), KHÔNG
+            # ghi đè nếu profile_id đó đã có dữ liệu thật từ config sync.
             for entry in mappings:
                 profile_id = entry["profile_id"]
                 chassis_full = entry["chassis_rear"]
@@ -133,6 +198,7 @@ def main():
                     ) VALUES (
                         %s, 1, %s, %s, %s, %s, %s, %s, %s, true, NULL
                     )
+                    ON CONFLICT (profile_id) DO NOTHING
                     """,
                     (
                         profile_id, chassis_full, _strip_prefix(chassis_full),
@@ -149,6 +215,7 @@ def main():
                         INSERT INTO profile_led_code_cache (
                             profile_id, led_slot, code_full, code_input, suffix_check, is_required, is_active
                         ) VALUES (%s, %s, %s, %s, %s, true, true)
+                        ON CONFLICT (profile_id, led_slot) DO NOTHING
                         """,
                         (profile_id, slot, code_full, _strip_prefix(code_full), code_full[-5:]),
                     )

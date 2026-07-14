@@ -1,0 +1,705 @@
+﻿<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
+<HTML>
+  <BODY>
+    <UL>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="AlreadyOpen enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="BeginReceive method">
+        <param name="Local" value="html/bb352c30-b7f3-872a-49cd-e161130dd50b.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="BeginReceiveFailed enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="BinningType property">
+        <param name="Local" value="html/68b4d3a0-d5b3-6aee-f8df-03fd298ca10e.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Bitmap enumeration member">
+        <param name="Local" value="html/ffc25168-f423-aac6-af32-b11157c9b5f8.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Closed enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="CloseFtp method">
+        <param name="Local" value="html/972fea35-9b97-d478-590e-dec42b4fb65a.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="CommandInvalidArgument enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="CommandPort property">
+        <param name="Local" value="html/1e78ca30-9b81-87d7-f3eb-8a2753d2be2f.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="CommandPortInvalidArgument enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="CommandTimeoutInvalidArgument enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Connect method">
+        <param name="Local" value="html/b3cb5de7-27ab-aa95-7ce2-07cc94bfaaea.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="DataPort property">
+        <param name="Local" value="html/a9a65aff-7f71-1df0-c0ab-ba613e934398.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="DataPortInvalidArgument enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="DeleteFile method">
+        <param name="Local" value="html/3a02be8f-d358-f625-2eff-c4b16a833c1b.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Disconnect method">
+        <param name="Local" value="html/45835e51-f5ca-2843-9019-b13453449e58.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Dispose method">
+        <param name="See Also" value="Dispose method">
+      </OBJECT></LI>
+      <UL>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="LiveviewForm.Dispose Method ">
+          <param name="Local" value="html/27ff63d0-1f5f-9f0e-4f46-a57bb4ea9229.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="ReaderAccessor.Dispose Method ">
+          <param name="Local" value="html/3d36500a-abc2-fd66-5da3-a1b5ced33cad.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="ReaderSearcher.Dispose Method ">
+          <param name="Local" value="html/7b088f0b-19ac-a01b-df24-0d03eec7f726.htm">
+        </OBJECT></LI>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="DownloadRecentImage method">
+        <param name="Local" value="html/622f7cc1-3b3f-d1c2-3e91-f9ad4a93f5e5.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="EndReceive method">
+        <param name="Local" value="html/aef62d37-d6e3-4193-5404-dd41839787d3.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ErrorCode enumeration">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ExecCommand method">
+        <param name="Local" value="html/d2b89782-0581-34dc-70a8-867b9a883cfd.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Finalize method">
+        <param name="Local" value="html/47927726-21cc-954f-8b49-5b7e610f3d8b.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpActionAborted enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpActionFailed enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpArgumentsUnimplemented enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpCannotOpenDataConnection enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpCommandBadSequence enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpCommandUnimplemented enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpCommandUnrecognized enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpDataConnectionDisconnected enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpDiskFull enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpExceededDisk enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpFileActionFailed enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpFileBusy enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpInvalidArgument enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpNotLoggedIn enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="FtpServiceUnavailable enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="GetFile method">
+        <param name="Local" value="html/518e4bfb-88fb-28eb-f10c-710fc589dcc8.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="GetFileList method">
+        <param name="Local" value="html/cf2deed1-c0df-dfeb-cd60-f84f744cd281.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="HeadFailed enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ImageFormat property">
+        <param name="Local" value="html/17fb78dd-6b00-502e-3ed1-685bb27afa2e.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ImageQuality property">
+        <param name="Local" value="html/da1f2c53-a4eb-fc5c-16fc-0b5e0498e651.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="IpAddress property">
+        <param name="See Also" value="IpAddress property">
+      </OBJECT></LI>
+      <UL>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="LiveviewForm.IpAddress Property ">
+          <param name="Local" value="html/6563479a-c15c-77c4-cec2-7ef39fadff03.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="ReaderAccessor.IpAddress Property ">
+          <param name="Local" value="html/1af94e33-dd45-567d-3c3e-648e24c5e828.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="ReaderSearchResult.IpAddress Property ">
+          <param name="Local" value="html/f62fb4d0-15d6-b649-877c-77c40dd20ba4.htm">
+        </OBJECT></LI>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="IpAddressInvalidArgument enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="IpAddressUsed enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="IsReady property">
+        <param name="Local" value="html/a0a32065-08e0-43c7-49be-43c78bc5c955.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="IsSearching property">
+        <param name="Local" value="html/be2ad062-a354-b517-1a08-023dbf4f1a95.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Jpeg enumeration member">
+        <param name="Local" value="html/ffc25168-f423-aac6-af32-b11157c9b5f8.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Keyence.AutoID.SDK namespace">
+        <param name="Local" value="html/0cb6c94c-b1b9-4333-caa7-4f0582474f4f.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Keyence.AutoID.SDK.ErrorCode enumeration">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Keyence.AutoID.SDK.LiveviewForm class">
+        <param name="Local" value="html/d611a89f-2887-6084-8406-601e9d296464.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Keyence.AutoID.SDK.LiveviewForm.ImageBinningType enumeration">
+        <param name="Local" value="html/d09b573c-2b43-56a9-1ea3-46e703f898f4.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Keyence.AutoID.SDK.LiveviewForm.ImageFormatType enumeration">
+        <param name="Local" value="html/ffc25168-f423-aac6-af32-b11157c9b5f8.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Keyence.AutoID.SDK.NicSearchResult class">
+        <param name="Local" value="html/edeb7eb6-9e76-db39-f1b6-f78f3fc88ad4.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Keyence.AutoID.SDK.ReaderAccessor class">
+        <param name="Local" value="html/1b58ed0d-b684-94e9-2786-010a7b763411.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Keyence.AutoID.SDK.ReaderSearcher class">
+        <param name="Local" value="html/095649aa-8f57-0d13-86e2-fdfc04b1b408.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Keyence.AutoID.SDK.ReaderSearchResult class">
+        <param name="Local" value="html/8fcb766c-ac5a-9a99-4d68-064981562457.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LastErrorInfo property">
+        <param name="Local" value="html/b1e0e709-2373-f2fa-1fe2-4321ade4c42f.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ListUpNic method">
+        <param name="Local" value="html/1716117c-a01b-ece4-096b-953ba09fa27b.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm class">
+        <param name="See Also" value="LiveviewForm class">
+      </OBJECT></LI>
+      <UL>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="LiveviewForm Class">
+          <param name="Local" value="html/d611a89f-2887-6084-8406-601e9d296464.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="constructor">
+          <param name="Local" value="html/5ba305db-a8fd-bb98-ea78-2eb6c8870526.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="events">
+          <param name="Local" value="html/268a39a9-8c15-e266-41a8-910e4a5b0211.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="methods">
+          <param name="Local" value="html/0362a5a6-e7e8-56dd-92bd-b017b80b2802.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="properties">
+          <param name="Local" value="html/f8c38a31-0b8c-5978-0584-30d4a5f41dbb.htm">
+        </OBJECT></LI>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.BeginReceive method">
+        <param name="Local" value="html/bb352c30-b7f3-872a-49cd-e161130dd50b.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.BinningType property">
+        <param name="Local" value="html/68b4d3a0-d5b3-6aee-f8df-03fd298ca10e.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.Dispose method">
+        <param name="Local" value="html/27ff63d0-1f5f-9f0e-4f46-a57bb4ea9229.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.DownloadRecentImage method">
+        <param name="Local" value="html/622f7cc1-3b3f-d1c2-3e91-f9ad4a93f5e5.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.EndReceive method">
+        <param name="Local" value="html/aef62d37-d6e3-4193-5404-dd41839787d3.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.ImageBinningType enumeration">
+        <param name="Local" value="html/d09b573c-2b43-56a9-1ea3-46e703f898f4.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.ImageFormat property">
+        <param name="Local" value="html/17fb78dd-6b00-502e-3ed1-685bb27afa2e.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.ImageFormatType enumeration">
+        <param name="Local" value="html/ffc25168-f423-aac6-af32-b11157c9b5f8.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.ImageQuality property">
+        <param name="Local" value="html/da1f2c53-a4eb-fc5c-16fc-0b5e0498e651.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.IpAddress property">
+        <param name="Local" value="html/6563479a-c15c-77c4-cec2-7ef39fadff03.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.IsReady property">
+        <param name="Local" value="html/a0a32065-08e0-43c7-49be-43c78bc5c955.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.LiveviewForm constructor">
+        <param name="Local" value="html/5ba305db-a8fd-bb98-ea78-2eb6c8870526.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.PullTimeSpan property">
+        <param name="Local" value="html/6e94654f-4b1a-ba2b-aee1-20b2a8716bcf.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="LiveviewForm.TimeoutMs property">
+        <param name="Local" value="html/98ce1e3d-4788-4ef6-0f8a-196cd6767804.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="NicBroadCastIpAddr property">
+        <param name="Local" value="html/392747b8-7c20-b52c-681c-2511929f29d9.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="NicIpAddr property">
+        <param name="Local" value="html/bad265e6-1fcd-7114-176a-1b1d3102a28e.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="NicIpv4Mask property">
+        <param name="Local" value="html/6bd025a9-262a-d421-3709-befd6fdbcd51.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="NicName property">
+        <param name="Local" value="html/c0270dd4-c93f-ee3d-fa13-cda9f12c576c.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="NicSearchResult class">
+        <param name="See Also" value="NicSearchResult class">
+      </OBJECT></LI>
+      <UL>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="NicSearchResult Class">
+          <param name="Local" value="html/edeb7eb6-9e76-db39-f1b6-f78f3fc88ad4.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="constructor">
+          <param name="Local" value="html/cf10e359-03e4-56ce-baea-532ba4ba79ff.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="methods">
+          <param name="Local" value="html/9d274e2f-e15a-2728-240d-833d6b391e02.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="properties">
+          <param name="Local" value="html/32dc5d66-14a0-3547-e712-0b4ff59a77a3.htm">
+        </OBJECT></LI>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="NicSearchResult.NicBroadCastIpAddr property">
+        <param name="Local" value="html/392747b8-7c20-b52c-681c-2511929f29d9.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="NicSearchResult.NicIpAddr property">
+        <param name="Local" value="html/bad265e6-1fcd-7114-176a-1b1d3102a28e.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="NicSearchResult.NicIpv4Mask property">
+        <param name="Local" value="html/6bd025a9-262a-d421-3709-befd6fdbcd51.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="NicSearchResult.NicName property">
+        <param name="Local" value="html/c0270dd4-c93f-ee3d-fa13-cda9f12c576c.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="NicSearchResult.NicSearchResult constructor">
+        <param name="Local" value="html/cf10e359-03e4-56ce-baea-532ba4ba79ff.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="None enumeration member">
+        <param name="See Also" value="None enumeration member">
+      </OBJECT></LI>
+      <UL>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="ErrorCode Enumeration">
+          <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="LiveviewForm.ImageBinningType Enumeration">
+          <param name="Local" value="html/d09b573c-2b43-56a9-1ea3-46e703f898f4.htm">
+        </OBJECT></LI>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="OneNinth enumeration member">
+        <param name="Local" value="html/d09b573c-2b43-56a9-1ea3-46e703f898f4.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="OneQuarter enumeration member">
+        <param name="Local" value="html/d09b573c-2b43-56a9-1ea3-46e703f898f4.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="OneSixteenth enumeration member">
+        <param name="Local" value="html/d09b573c-2b43-56a9-1ea3-46e703f898f4.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="OpenFailed enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="OpenFtp method">
+        <param name="Local" value="html/a272f49c-df9a-0cb8-88df-732b6bee6587.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="PullTimeSpan property">
+        <param name="Local" value="html/6e94654f-4b1a-ba2b-aee1-20b2a8716bcf.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="PutFile method">
+        <param name="Local" value="html/e27561b5-81ef-11b3-c86e-a1ae417cc9f2.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor class">
+        <param name="See Also" value="ReaderAccessor class">
+      </OBJECT></LI>
+      <UL>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="ReaderAccessor Class">
+          <param name="Local" value="html/1b58ed0d-b684-94e9-2786-010a7b763411.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="constructor">
+          <param name="Local" value="html/75eab5c6-8610-d817-9959-386f40727699.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="methods">
+          <param name="Local" value="html/d47ffa28-ac4b-9d38-61dd-11e53a40e662.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="properties">
+          <param name="Local" value="html/69b02fde-7ee5-db6c-7a9b-b7cdd1e35bd2.htm">
+        </OBJECT></LI>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.CloseFtp method">
+        <param name="Local" value="html/972fea35-9b97-d478-590e-dec42b4fb65a.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.CommandPort property">
+        <param name="Local" value="html/1e78ca30-9b81-87d7-f3eb-8a2753d2be2f.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.Connect method">
+        <param name="Local" value="html/b3cb5de7-27ab-aa95-7ce2-07cc94bfaaea.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.DataPort property">
+        <param name="Local" value="html/a9a65aff-7f71-1df0-c0ab-ba613e934398.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.DeleteFile method">
+        <param name="Local" value="html/3a02be8f-d358-f625-2eff-c4b16a833c1b.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.Disconnect method">
+        <param name="Local" value="html/45835e51-f5ca-2843-9019-b13453449e58.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.Dispose method">
+        <param name="Local" value="html/3d36500a-abc2-fd66-5da3-a1b5ced33cad.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.ExecCommand method">
+        <param name="Local" value="html/d2b89782-0581-34dc-70a8-867b9a883cfd.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.GetFile method">
+        <param name="Local" value="html/518e4bfb-88fb-28eb-f10c-710fc589dcc8.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.GetFileList method">
+        <param name="Local" value="html/cf2deed1-c0df-dfeb-cd60-f84f744cd281.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.IpAddress property">
+        <param name="Local" value="html/1af94e33-dd45-567d-3c3e-648e24c5e828.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.LastErrorInfo property">
+        <param name="Local" value="html/b1e0e709-2373-f2fa-1fe2-4321ade4c42f.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.OpenFtp method">
+        <param name="Local" value="html/a272f49c-df9a-0cb8-88df-732b6bee6587.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.PutFile method">
+        <param name="Local" value="html/e27561b5-81ef-11b3-c86e-a1ae417cc9f2.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderAccessor.ReaderAccessor constructor">
+        <param name="Local" value="html/75eab5c6-8610-d817-9959-386f40727699.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderModel property">
+        <param name="Local" value="html/c019daca-f9c1-9285-3f04-e1f9c2eaee0f.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderName property">
+        <param name="Local" value="html/0bc783c0-f91b-1824-5134-d6afadad85e8.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearcher class">
+        <param name="See Also" value="ReaderSearcher class">
+      </OBJECT></LI>
+      <UL>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="ReaderSearcher Class">
+          <param name="Local" value="html/095649aa-8f57-0d13-86e2-fdfc04b1b408.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="constructor">
+          <param name="Local" value="html/9b66e4ed-9263-cfc2-9e8e-f13a729206a6.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="methods">
+          <param name="Local" value="html/fc3afcb4-86bd-111c-6e09-ba54729f5b50.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="properties">
+          <param name="Local" value="html/2e6d681e-9a9e-e649-ed7d-e37dbc702698.htm">
+        </OBJECT></LI>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearcher.Dispose method">
+        <param name="Local" value="html/7b088f0b-19ac-a01b-df24-0d03eec7f726.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearcher.Finalize method">
+        <param name="Local" value="html/47927726-21cc-954f-8b49-5b7e610f3d8b.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearcher.IsSearching property">
+        <param name="Local" value="html/be2ad062-a354-b517-1a08-023dbf4f1a95.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearcher.ListUpNic method">
+        <param name="Local" value="html/1716117c-a01b-ece4-096b-953ba09fa27b.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearcher.ReaderSearcher constructor">
+        <param name="Local" value="html/9b66e4ed-9263-cfc2-9e8e-f13a729206a6.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearcher.SelectedNicSearchResult property">
+        <param name="Local" value="html/8428444a-d362-625c-cb4a-6ee0a9aad949.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearcher.Start method">
+        <param name="Local" value="html/c3e04206-322c-5c99-d184-3f7ac766d7de.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearcher.Stop method">
+        <param name="Local" value="html/d72332c6-5213-4531-6a5d-2cbcb485ea2f.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearcher.TimeoutMs property">
+        <param name="Local" value="html/29654d93-82e9-efdc-f21d-d6e4d4f6cffb.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearchResult class">
+        <param name="See Also" value="ReaderSearchResult class">
+      </OBJECT></LI>
+      <UL>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="ReaderSearchResult Class">
+          <param name="Local" value="html/8fcb766c-ac5a-9a99-4d68-064981562457.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="constructor">
+          <param name="Local" value="html/d669e67a-91b2-b6f8-ddeb-ccf90c3fa983.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="methods">
+          <param name="Local" value="html/8fe7cc07-6edf-4df8-c180-23142c64020f.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="properties">
+          <param name="Local" value="html/96e9ab89-024a-c704-054d-72318968787f.htm">
+        </OBJECT></LI>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearchResult.IpAddress property">
+        <param name="Local" value="html/f62fb4d0-15d6-b649-877c-77c40dd20ba4.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearchResult.ReaderModel property">
+        <param name="Local" value="html/c019daca-f9c1-9285-3f04-e1f9c2eaee0f.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearchResult.ReaderName property">
+        <param name="Local" value="html/0bc783c0-f91b-1824-5134-d6afadad85e8.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="ReaderSearchResult.ReaderSearchResult constructor">
+        <param name="Local" value="html/d669e67a-91b2-b6f8-ddeb-ccf90c3fa983.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="SelectedNicSearchResult property">
+        <param name="Local" value="html/8428444a-d362-625c-cb4a-6ee0a9aad949.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="SendFailed enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="SocketAddressDisabled enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="SocketAddressUsed enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="SocketAlreadyConnected enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="SocketConnectionRefused enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="SocketConnectionReset enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="SocketConnectionTimeout enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="SocketConnectionUnreach enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Start method">
+        <param name="Local" value="html/c3e04206-322c-5c99-d184-3f7ac766d7de.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Stop method">
+        <param name="Local" value="html/d72332c6-5213-4531-6a5d-2cbcb485ea2f.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="Timeout enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="TimeoutMs property">
+        <param name="See Also" value="TimeoutMs property">
+      </OBJECT></LI>
+      <UL>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="LiveviewForm.TimeoutMs Property ">
+          <param name="Local" value="html/98ce1e3d-4788-4ef6-0f8a-196cd6767804.htm">
+        </OBJECT></LI>
+        <LI><OBJECT type="text/sitemap">
+          <param name="Name" value="ReaderSearcher.TimeoutMs Property ">
+          <param name="Local" value="html/29654d93-82e9-efdc-f21d-d6e4d4f6cffb.htm">
+        </OBJECT></LI>
+      </UL>
+      <LI><OBJECT type="text/sitemap">
+        <param name="Name" value="UnexpectedError enumeration member">
+        <param name="Local" value="html/85788688-4bc3-362d-fe15-1f326e3e3569.htm">
+      </OBJECT></LI>
+    </UL>
+  </BODY>
+</HTML>

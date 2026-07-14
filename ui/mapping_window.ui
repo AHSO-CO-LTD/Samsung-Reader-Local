@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MappingWindow</class>
+ <widget class="QDialog" name="MappingWindow">
+  <property name="geometry"><rect><x>0</x><y>0</y><width>1150</width><height>600</height></rect></property>
+  <property name="windowTitle"><string>Mapping</string></property>
+  <layout class="QVBoxLayout" name="verticalLayoutRoot">
+   <item>
+    <widget class="QTableWidget" name="tableWidgetMapping">
+     <property name="font"><font><pointsize>10</pointsize></font></property>
+     <property name="selectionBehavior"><enum>QAbstractItemView::SelectRows</enum></property>
+     <property name="selectionMode"><enum>QAbstractItemView::SingleSelection</enum></property>
+     <property name="editTriggers"><set>QAbstractItemView::NoEditTriggers</set></property>
+     <attribute name="horizontalHeaderDefaultSectionSize"><number>150</number></attribute>
+     <attribute name="horizontalHeaderStretchLastSection"><bool>true</bool></attribute>
+     <column><property name="text"><string>Code Chassis Rear</string></property></column>
+     <column><property name="text"><string>Code LED 1</string></property></column>
+     <column><property name="text"><string>Code LED 2</string></property></column>
+     <column><property name="text"><string>Length Code LED</string></property></column>
+     <column><property name="text"><string>Length Code Bottom</string></property></column>
+     <column><property name="text"><string>No Led</string></property></column>
+     <column><property name="text"><string>No Bottom</string></property></column>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

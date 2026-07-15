@@ -124,7 +124,7 @@ RUNTIME_BANNER_STYLES = {
     "_default": "background-color: #9e9e9e; color: white;",
 }
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "0.1.0"
 
 RESULT_STYLE = {
     # "" (không set gì) -> tự rơi về đúng style mặc định của

@@ -14,7 +14,7 @@
 
 | Thư mục/file | Vai trò |
 | --- | --- |
-| `main.py` | Entry point — chạy `python main.py` (trong `venv`) hoặc `LocalReaderMonitor.exe` khi đóng gói. Có `_setup_crash_logging()` ghi mọi uncaught exception ra `app_error.log` |
+| `main.py` | Entry point — chạy `python main.py` (trong `venv`) hoặc `LocalReaderMonitor.exe` khi đóng gói. Có `_setup_crash_logging()` ghi mọi uncaught exception ra `app_error.log`, và `QLockFile` (`app.lock`) chặn mở 2 instance cùng lúc trên 1 máy (tự phát hiện lock cũ nếu instance trước bị crash) |
 | `app_paths.py` | `get_writable_dir()`/`get_bundle_dir()` — nền tảng path resolution dùng chung, phân biệt file **cần ghi/sửa được** (config JSON, log) với file **chỉ đọc bundle sẵn** (`.ui`, icon, âm thanh, `schema.sql`); tự động đúng cả khi chạy `python main.py` lẫn khi chạy `.exe` đã đóng gói — xem mục 9 |
 | `ui/main_window.py` + `.ui` | Màn hình chính: nhận scan, so khớp OK/NG, gate màn scan theo trạng thái đăng ký/config |
 | `ui/register_window.py` + `.ui` | Dialog đăng ký máy với server (tiếng Anh) |

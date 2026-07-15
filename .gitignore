@@ -22,8 +22,12 @@ legacy_dotnet_sdk_approach/
 dist/
 build/
 app_error.log
+app.lock
 
 # Editor / OS
 .vscode/
 Thumbs.db
 .DS_Store
+
+# Test
+test_exe/

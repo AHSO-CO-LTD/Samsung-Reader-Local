@@ -4,13 +4,15 @@ import sys
 import traceback
 from logging.handlers import RotatingFileHandler
 
+from PyQt5.QtCore import QLockFile
 from PyQt5.QtGui import QFont, QIcon
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from app_paths import get_bundle_dir, get_writable_dir
 
 LOGO_PATH = os.path.join(get_bundle_dir(), "ui", "logo", "VISION CENTER LOGOLOGO ICON.ico")
 LOG_PATH = os.path.join(get_writable_dir(), "app_error.log")
+LOCK_PATH = os.path.join(get_writable_dir(), "app.lock")
 
 
 def _setup_crash_logging():
@@ -48,13 +50,29 @@ def _setup_crash_logging():
 def main():
     _setup_crash_logging()
 
+    app = QApplication(sys.argv)
+    app.setApplicationName("Local Reader Monitor")
+    app.setFont(QFont("Segoe UI", 10))
+    app.setWindowIcon(QIcon(LOGO_PATH))
+
+    # Chặn mở 2 instance cùng lúc trên 1 máy — mở 2 lần sẽ khiến 2 tiến trình
+    # cùng giành kết nối TCP tới 3 đầu đọc thật, cùng ghi đè local_app_settings
+    # (bảng chỉ 1 dòng), và cùng gửi heartbeat/identity-status lên server với
+    # cùng machine_code. Dùng QLockFile (PyQt5, không cần thêm dependency như
+    # pywin32) thay vì Mutex kiểu Windows — QLockFile tự phát hiện lock cũ do
+    # tiến trình trước bị crash để lại (PID trong lock file không còn sống) và
+    # tự dọn, không cần code thêm.
+    lock_file = QLockFile(LOCK_PATH)
+    if not lock_file.tryLock(100):
+        QMessageBox.warning(
+            None, "Local Reader Monitor",
+            "Ứng dụng đã đang chạy trên máy này — chỉ được mở 1 cửa sổ cùng lúc.",
+        )
+        sys.exit(0)
+
     try:
         from ui.main_window import MainWindow  # sau _setup_crash_logging() để bắt được cả lỗi import
 
-        app = QApplication(sys.argv)
-        app.setApplicationName("Local Reader Monitor")
-        app.setFont(QFont("Segoe UI", 10))
-        app.setWindowIcon(QIcon(LOGO_PATH))
         window = MainWindow()
         window.showMaximized()
     except Exception:

@@ -1,7 +1,9 @@
 import json
 import os
 
-DEFAULT_STORE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "readers_config.json")
+from app_paths import get_writable_dir
+
+DEFAULT_STORE_PATH = os.path.join(get_writable_dir(), "readers_config.json")
 
 
 def load_readers(path=DEFAULT_STORE_PATH):

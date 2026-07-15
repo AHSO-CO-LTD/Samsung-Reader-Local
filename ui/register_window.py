@@ -7,8 +7,9 @@ from PyQt5.QtWidgets import QDialog
 
 from db.local_db import add_local_notification, get_app_settings, update_app_settings
 from machine.identity import ensure_machine_identity
+from app_paths import get_bundle_dir
 
-UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "register_window.ui")
+UI_PATH = os.path.join(get_bundle_dir(), "ui", "register_window.ui")
 
 MAX_LOG_LINES = 500
 

@@ -13,8 +13,13 @@ from datetime import datetime, timedelta
 
 import psycopg
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_db_config.json")
-SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
+from app_paths import get_bundle_dir, get_writable_dir
+
+# local_db_config.json chứa mật khẩu, user tự sửa được — nằm cạnh .exe thật
+# (get_writable_dir()), KHÔNG phải trong _internal/. schema.sql chỉ đọc, do
+# PyInstaller bundle sẵn — vẫn ở get_bundle_dir() như mọi file .ui/icon khác.
+CONFIG_PATH = os.path.join(get_writable_dir(), "local_db_config.json")
+SCHEMA_PATH = os.path.join(get_bundle_dir(), "db", "schema.sql")
 
 # Số ngày lùi lại (ngoài hôm nay) khi kiểm tra độc nhất. 0 = chỉ hôm nay,
 # 1 = hôm qua + hôm nay, 2 = 3 ngày gần nhất, ...
@@ -26,7 +31,10 @@ _config = None
 def _load_config():
     global _config
     if _config is None:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        # utf-8-sig: script PowerShell tạo file này (setup.ps1) có thể ghi
+        # kèm BOM tuỳ cmdlet — utf-8-sig đọc đúng cả 2 trường hợp có/không
+        # có BOM, không cần script PowerShell phải chuẩn tuyệt đối.
+        with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
             _config = json.load(f)
     return _config
 

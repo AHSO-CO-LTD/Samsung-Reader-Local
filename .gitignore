@@ -6,13 +6,22 @@ __pycache__/
 *.pyc
 
 # Cấu hình riêng từng máy — không phải source code, KHÔNG commit
-# (local_db_config.json chứa mật khẩu Postgres)
-db/local_db_config.json
-server/server_config.json
-reader/readers_config.json
+# (local_db_config.json chứa mật khẩu Postgres). Nằm ở GỐC project (không
+# phải trong db/, server/, reader/ nữa) — xem app_paths.py:get_writable_dir()
+# (đóng gói PyInstaller cần các file này nằm cạnh .exe, không phải rải rác
+# theo cấu trúc thư mục source).
+local_db_config.json
+server_config.json
+readers_config.json
 
 # Legacy .NET SDK approach
 legacy_dotnet_sdk_approach/
+
+# Output PyInstaller — tự sinh lại từ LocalReaderMonitor.spec (local hoặc CI),
+# không commit — xem docs/deploy.md
+dist/
+build/
+app_error.log
 
 # Editor / OS
 .vscode/

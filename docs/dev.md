@@ -14,27 +14,33 @@
 
 | Thư mục/file | Vai trò |
 | --- | --- |
-| `main.py` | Entry point — chạy `python main.py` (trong `venv`) |
+| `main.py` | Entry point — chạy `python main.py` (trong `venv`) hoặc `LocalReaderMonitor.exe` khi đóng gói. Có `_setup_crash_logging()` ghi mọi uncaught exception ra `app_error.log` |
+| `app_paths.py` | `get_writable_dir()`/`get_bundle_dir()` — nền tảng path resolution dùng chung, phân biệt file **cần ghi/sửa được** (config JSON, log) với file **chỉ đọc bundle sẵn** (`.ui`, icon, âm thanh, `schema.sql`); tự động đúng cả khi chạy `python main.py` lẫn khi chạy `.exe` đã đóng gói — xem mục 9 |
 | `ui/main_window.py` + `.ui` | Màn hình chính: nhận scan, so khớp OK/NG, gate màn scan theo trạng thái đăng ký/config |
 | `ui/register_window.py` + `.ui` | Dialog đăng ký máy với server (tiếng Anh) |
 | `ui/config_window.py` + `.ui` | Dialog cấu hình reader (thêm/xoá/sửa IP, port) (tiếng Anh) |
 | `ui/mapping_window.ui` | Dialog xem danh sách profile/mapping (chỉ hiển thị) |
 | `reader/reader_bridge.py` | `ReaderManager` — quản lý nhiều reader, mỗi reader 1 `QThread` giữ kết nối TCP sống |
 | `reader/SRX_comm.py` | Giao thức tầng thấp nói chuyện với đầu đọc Keyence SR-X |
-| `reader/reader_store.py` | Đọc/ghi danh sách reader đã cấu hình — `reader/readers_config.json` (gitignored, riêng từng máy) |
+| `reader/reader_store.py` | Đọc/ghi danh sách reader đã cấu hình — `readers_config.json` (gốc project, gitignored, riêng từng máy) |
 | `data/mapping_store.py` | `load_mappings()` — **đọc DB thật** (`profile_cache`/`profile_led_code_cache`), KHÔNG còn là mock — xem mục 5 |
 | `data/duplicate_key.py` | Tính `duplicate_key` từ mã QR đầy đủ |
 | `db/local_db.py` | Toàn bộ hàm truy cập Postgres — điểm ghi duy nhất cho mọi bảng |
 | `db/schema.sql` | DDL đầy đủ 16 bảng — **nguồn chân lý cho schema**, đọc file này thay vì suy luận từ code |
-| `db/local_db_config.json` | Cấu hình kết nối Postgres (có mật khẩu) — **gitignored**, xem mục 6 để biết cách tạo |
+| `local_db_config.json` | Cấu hình kết nối Postgres (có mật khẩu) — **gốc project** (không phải `db/` nữa — xem mục 9), gitignored, xem mục 6 để biết cách tạo |
 | `db/seed_full_schema.py` | Script dev-only sinh dữ liệu mẫu — xem mục 7 (cạm bẫy) trước khi chạy |
 | `machine/hardware_id.py` | Đọc Windows MachineGuid + BIOS UUID + serial mainboard; định danh dùng MachineGuid làm serial và BIOS UUID làm uid |
 | `machine/identity.py` | `ensure_machine_identity()` — cache serial/uid vào `local_app_settings` |
 | `server/api_client.py` | `SamsungQrServerClient` — REST client, transcribe gần như nguyên văn từ doc API (mục 22 của doc) |
 | `server/server_worker.py` | `ServerWorker(QThread)` — 1 thread nền xử lý hàng đợi job gọi API, không chặn GUI |
-| `server/server_config.json` | Host/port server hiện tại — **gitignored**, đổi qua nút "Change Server IP" trên `main_window` |
+| `server_config.json` | Host/port server hiện tại — **gốc project** (không phải `server/` nữa — xem mục 9), gitignored, đổi qua nút "Change Server IP" trên `main_window` |
 | `docs/10-huong-dan-api-may-local-python (2).md` | **Doc API chuẩn, đọc file này** (không phải bản không có "(2)" — bản cũ hơn, ít nội dung hơn) |
 | `docs/11-sql-khoi-tao-db-may-local-python-postgres (3).md` | Doc SQL tham khảo mới nhất (không phải bản "(2)") — nhưng `db/schema.sql` mới là DDL thật đang chạy |
+| `docs/deploy.md` | Hướng dẫn đóng gói/cài đặt `LocalReaderMonitor.exe` trên máy production — xem mục 9 |
+| `LocalReaderMonitor.spec` | Cấu hình PyInstaller (`--onedir --windowed`, icon, `datas`) — build bằng `pyinstaller LocalReaderMonitor.spec --noconfirm` |
+| `requirements-build.txt` | Dependency CHỈ cần lúc đóng gói (`pyinstaller`) — tách khỏi `requirements.txt` runtime |
+| `setup.ps1` | Script cài PostgreSQL + tạo role/database/schema + sinh `local_db_config.json` trên máy client — nằm cạnh `.exe` trong gói release |
+| `.github/workflows/build.yml` | CI build-only (tag `v*` hoặc thủ công) — KHÔNG chạy `setup.ps1`/cài Postgres trong CI |
 | `tools/` | `mock_reader_server.py`/`mock_codes.json` — giả lập đầu đọc để test không cần phần cứng thật |
 
 ## 3. Luồng nghiệp vụ chính (scan → OK/NG)
@@ -103,9 +109,9 @@ Chỉ `READY`/`SCANNING`/`SYNCING` (`SCAN_ENABLED_STATUSES` trong `main_window.p
 
 ## 6. File cấu hình riêng từng máy (gitignored)
 
-3 file này **không có trong git**, phải tự tạo khi setup máy mới:
+3 file này **không có trong git**, nằm ở **gốc project** (không phải trong `db/`/`server/`/`reader/` — dời về gốc khi làm packaging, xem mục 9 lý do), phải tự tạo khi setup máy mới (hoặc để `setup.ps1` tự sinh — xem mục 9):
 
-**`db/local_db_config.json`**:
+**`local_db_config.json`**:
 ```json
 {
   "host": "127.0.0.1",
@@ -117,12 +123,12 @@ Chỉ `READY`/`SCANNING`/`SYNCING` (`SCAN_ENABLED_STATUSES` trong `main_window.p
 }
 ```
 
-**`server/server_config.json`** (tự tạo lần đầu qua nút "Change Server IP" nếu chưa có, mặc định `127.0.0.1:3979`):
+**`server_config.json`** (tự tạo lần đầu qua nút "Change Server IP" nếu chưa có, mặc định `127.0.0.1:3979`):
 ```json
 { "host": "192.168.100.1", "port": 3979 }
 ```
 
-**`reader/readers_config.json`** — danh sách reader đã cấu hình qua dialog Configure, tự sinh khi bấm "Add reader" lần đầu, không cần tạo tay.
+**`readers_config.json`** — danh sách reader đã cấu hình qua dialog Configure, tự sinh khi bấm "Add reader" lần đầu, không cần tạo tay.
 
 ## 7. Lưu ý quan trọng / cạm bẫy
 
@@ -133,7 +139,7 @@ Chỉ `READY`/`SCANNING`/`SYNCING` (`SCAN_ENABLED_STATUSES` trong `main_window.p
 - **Console Windows không in được tiếng Việt có dấu trực tiếp** (cp1252) khi chạy script rời qua Bash tool — dùng `PYTHONIOENCODING=utf-8` + redirect ra file rồi đọc file, đừng in thẳng ra stdout.
 - **Repo mới có git từ 2026-07-14** (sau khi đã làm xong Bước 1-4) — lịch sử trước đó không có trong git. `.gitignore` loại trừ `venv/`, `__pycache__/`, 3 file cấu hình ở mục 6, `legacy_dotnet_sdk_approach/`.
 - **`register_window.py` tự poll bằng `request_id`, `main_window.py` tự poll `identity/status` bằng `serial+uid`** — 2 cơ chế ĐỘC LẬP, chạy song song, cùng ghi `local_app_settings`. Có thể lệch nhịp vài giây nếu cả 2 cùng chạy (dialog đang mở + app đang chạy nền), nhưng tự đồng bộ lại ở lần poll kế tiếp — không cần khoá chéo.
-- **Không dùng mock server để test** — luôn test với server thật/dev (địa chỉ đổi qua `server/server_config.json`). Tự tắt mọi instance app đã tự mở để test xong việc.
+- **Không dùng mock server để test** — luôn test với server thật/dev (địa chỉ đổi qua `server_config.json`). Tự tắt mọi instance app đã tự mở để test xong việc.
 - **Quy ước ngôn ngữ**: comment code luôn tiếng Việt (toàn bộ codebase). Text UI: `main_window.py` (màn hình operator) tiếng Việt; `register_window.py`/`config_window.py` (dialog kỹ thuật/admin) tiếng Anh.
 
 ## 8. Quy ước làm việc đã thống nhất với user
@@ -141,4 +147,16 @@ Chỉ `READY`/`SCANNING`/`SYNCING` (`SCAN_ENABLED_STATUSES` trong `main_window.p
 - Làm **từng endpoint 1** (hoặc vài endpoint liên quan chặt), đúng thứ tự phụ thuộc, mỗi endpoint **hoàn thiện** (kể cả sửa `.ui` nếu cần) và **test xong** (kể cả với server thật) mới sang endpoint kế tiếp — không bundle nhiều endpoint vào 1 lần, không làm bản "tối thiểu" rồi để đó.
 - "Wire as you go": bảng DB liên quan tới endpoint đang làm thì wire luôn trong cùng bước, không để dồn lại làm sau.
 - Trước khi sửa logic core rủi ro cao (vd đổi nguồn dữ liệu so khớp OK/NG), cân nhắc đề xuất git để có đường lùi — không tự ý `git init`/commit/push nếu chưa được yêu cầu rõ.
+
+## 9. Đóng gói & triển khai ("Local Reader Monitor")
+
+App đóng gói bằng PyInstaller thành `LocalReaderMonitor.exe` (`--onedir`, không phải `--onefile` — onefile giải nén lại vào thư mục tạm ngẫu nhiên mỗi lần chạy, mất hết config/DB giữa các lần mở app, đã tự verify bằng build thật). Hướng dẫn cài đặt đầy đủ cho máy production: **`docs/deploy.md`**.
+
+Điểm quan trọng nhất cho ai sửa code sau này:
+
+- **`app_paths.py`** là nền tảng path resolution — MỌI file cần đọc lúc chạy phải qua `get_writable_dir()` (config JSON, log — user sửa được, nằm cạnh `.exe` thật) hoặc `get_bundle_dir()` (`.ui`/icon/âm thanh/`schema.sql` — chỉ đọc, PyInstaller bundle sẵn trong `_internal/`). KHÔNG tự tính `__file__`/đường dẫn tương đối kiểu cũ — khi đóng gói `--onedir`, mọi thứ tính theo `__file__` sẽ rơi vào `_internal/` chứ không nằm cạnh `.exe`, đã tự verify bằng build thật.
+- 3 file config JSON (`local_db_config.json`/`server_config.json`/`readers_config.json`) đọc bằng `encoding="utf-8-sig"` (trừ `readers_config.json` — chỉ app tự ghi, không qua PowerShell) — chấp nhận cả file có/không có BOM, vì `setup.ps1` hoặc thao tác tay bằng PowerShell 5.1 có thể ghi kèm BOM.
+- **`setup.ps1` (script PowerShell) BẮT BUỘC phải lưu với UTF-8 BOM** — ngược lại với các file JSON ở trên. PowerShell 5.1 mặc định đọc file `.ps1` không-BOM theo codepage ANSI hệ thống, không phải UTF-8 — comment tiếng Việt có dấu/em-dash trong script sẽ bị hiểu sai byte, gây lỗi parse (`"The string is missing the terminator"`) rất khó đoán nguyên nhân nếu không biết cạm bẫy này. Đã tự verify bằng chạy thật (lỗi thật, không phải suy đoán).
+- **Không dùng `2>&1` khi gọi `psql.exe` (hay bất kỳ native exe nào) trong PowerShell 5.1** — PowerShell bọc từng dòng stderr thành `ErrorRecord`, khiến `$ErrorActionPreference="Stop"` dừng cả script chỉ vì psql in 1 dòng NOTICE (vd `DROP TRIGGER IF EXISTS` báo "does not exist, skipping") chứ không phải lỗi thật. Chỉ dựa vào `$LASTEXITCODE` để biết thành công/thất bại, để stderr in thẳng ra console. Xem `Invoke-Psql` trong `setup.ps1`.
+- **`main.py`'s crash logging phải tự `try/except` quanh phần khởi động (trước `app.exec_()`) và gọi `sys.exit()` tường minh** — nếu chỉ dựa vào `sys.excepthook` mà để exception lọt ra khỏi `main()`, bootloader PyInstaller bản `--windowed` (`runw.exe`) tự hiện thêm hộp thoại "Unhandled exception in script" của riêng nó (native, không phải do code Python), bất kể `sys.excepthook` đã ghi log xong hay chưa. Đã tự verify bằng build thật — ban đầu tưởng lỗi do gọi `sys.__excepthook__` trong hook, nhưng dựng bản build KHÔNG gọi gì thêm sau khi log vẫn bị hộp thoại này, chứng minh nó độc lập với code Python.
 - Chỉ commit khi được yêu cầu rõ ràng.

@@ -7,8 +7,9 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QDialog, QMessageBox, QTableWidgetItem
 
 from reader.reader_store import save_readers
+from app_paths import get_bundle_dir
 
-UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config_window.ui")
+UI_PATH = os.path.join(get_bundle_dir(), "ui", "config_window.ui")
 
 STATUS_LABELS = {
     "connecting": "Connecting...",

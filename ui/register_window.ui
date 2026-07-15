@@ -4,6 +4,44 @@
  <widget class="QDialog" name="RegisterWindow">
   <property name="geometry"><rect><x>0</x><y>0</y><width>560</width><height>560</height></rect></property>
   <property name="windowTitle"><string>Machine Registration</string></property>
+  <property name="styleSheet">
+   <string notr="true">/*
+ Dialog này KHÔNG có QGroupBox/QPushButton/QTextEdit riêng — các widget đó
+ tự kế thừa đúng theme từ MainWindow (Qt lan truyền stylesheet theo cây
+ cha-con, kể cả cửa sổ con dùng parent=... dù là top-level window riêng).
+ Chỉ cần bổ sung phần MainWindow không có: nền QDialog, màu chữ QLabel, và
+ QLineEdit (main_window.py không dùng QLineEdit nên theme gốc chưa style tới).
+ */
+QDialog {
+    background-color: #1F403E;
+}
+
+QLabel {
+    background-color: transparent;
+    color: #F3F7F5;
+}
+
+QLineEdit {
+    min-height: 24px;
+    background-color: #FFF0D7;
+    color: #203B39;
+    border: 1px solid #D7C48E;
+    border-radius: 3px;
+    padding: 3px 8px;
+    selection-background-color: #2F8F5B;
+    selection-color: #FFFFFF;
+}
+
+QLineEdit:focus {
+    border: 2px solid #76B995;
+}
+
+QLineEdit:disabled {
+    background-color: #8A9C97;
+    color: #5C6E69;
+    border-color: #728C88;
+}</string>
+  </property>
   <layout class="QVBoxLayout" name="verticalLayoutRoot">
    <item>
     <widget class="QGroupBox" name="groupBoxIdentity">

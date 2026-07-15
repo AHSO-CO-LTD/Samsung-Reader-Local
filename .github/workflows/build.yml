@@ -1,0 +1,45 @@
+name: Build LocalReaderMonitor
+
+# Chỉ build thôi — KHÔNG chạy setup.ps1/cài PostgreSQL ở đây. Runner là máy ảo
+# cloud, không có đường vào mạng LAN nhà máy; setup.ps1 chỉ chạy tay tại chỗ
+# trên máy khách thật (đã thống nhất khi thiết kế quy trình đóng gói).
+"on":
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Build with PyInstaller
+        run: pyinstaller LocalReaderMonitor.spec --noconfirm
+
+      - name: Assemble release package (exe + setup.ps1 side by side)
+        shell: pwsh
+        run: Copy-Item setup.ps1 dist/LocalReaderMonitor/setup.ps1
+
+      - name: Zip release package
+        shell: pwsh
+        run: Compress-Archive -Path dist/LocalReaderMonitor/* -DestinationPath LocalReaderMonitor.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LocalReaderMonitor
+          path: LocalReaderMonitor.zip
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LocalReaderMonitor.zip

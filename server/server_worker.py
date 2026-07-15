@@ -68,4 +68,12 @@ class ServerWorker(QThread):
             return self._client.get_identity_status(**kwargs)
         if job_kind == "config":
             return self._client.get_machine_config(**kwargs)
+        if job_kind == "commands_poll":
+            return self._client.poll_commands(**kwargs)
+        if job_kind == "command_ack":
+            return self._client.ack_command(**kwargs)
+        if job_kind == "heartbeat":
+            return self._client.heartbeat(**kwargs)
+        if job_kind == "scan_submit":
+            return self._client.submit_scan(**kwargs)
         raise ValueError(f"Không hỗ trợ job_kind: {job_kind}")

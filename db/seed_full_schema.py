@@ -96,7 +96,7 @@ def _build_full_code(chassis_rear, vendor_char, led_suffix6, after_factory):
 def main():
     init_schema()
     hw = get_hardware_id()
-    machine_serial = hw["motherboard_serial"] or "SN-DEV-UNKNOWN"
+    machine_serial = hw["machine_guid"] or "SN-DEV-UNKNOWN"
     machine_uid = hw["bios_uuid"] or "UID-DEV-UNKNOWN"
 
     mappings = _MOCK_MAPPINGS
@@ -474,7 +474,11 @@ def main():
                 """,
                 (
                     json.dumps({}), yesterday_9am,
-                    json.dumps({"bios_uuid": machine_uid, "motherboard_serial": machine_serial}), yesterday_9am,
+                    json.dumps({
+                        "machine_guid": hw["machine_guid"],
+                        "bios_uuid": hw["bios_uuid"],
+                        "motherboard_serial": hw["motherboard_serial"],
+                    }), yesterday_9am,
                     json.dumps({"local_scan_id": duplicate_scan_id}), today_9am,
                 ),
             )
@@ -484,7 +488,7 @@ def main():
         conn.close()
 
     print("Da sinh du lieu mau cho du 16 bang.")
-    print(f"machine_serial (that, tu machine/hardware_id.py) = {machine_serial}")
+    print(f"machine_serial (MachineGuid)                     = {machine_serial}")
     print(f"machine_uid (that, tu machine/hardware_id.py)    = {machine_uid}")
 
 

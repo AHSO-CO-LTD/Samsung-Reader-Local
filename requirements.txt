@@ -1,17 +1,8 @@
-certifi==2026.6.17
-cffi==2.0.0
-charset-normalizer==3.4.9
-clr_loader==0.3.1
-cryptography==49.0.0
-idna==3.18
-psycopg==3.3.4
-psycopg-binary==3.3.4
-pycparser==3.0
-pypdf==6.14.2
+# Desktop UI (bao gồm QtMultimedia dùng phát âm thanh OK/NG)
 PyQt5==5.15.11
-PyQt5-Qt5==5.15.2
-PyQt5_sip==12.18.0
-pythonnet==3.1.0
+
+# PostgreSQL driver + binary runtime cho máy Windows
+psycopg[binary]==3.3.4
+
+# REST client kết nối Samsung QR server
 requests==2.34.2
-typing_extensions==4.16.0
-tzdata==2026.3

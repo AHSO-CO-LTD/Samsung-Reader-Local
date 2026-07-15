@@ -335,6 +335,115 @@ def apply_machine_config(data, serial, uid):
         conn.close()
 
 
+def get_server_settings():
+    """Đọc server_settings_cache (singleton, id=1) — đã sync qua GET /api/
+    machines/config (xem apply_machine_config), trả về dict theo tên cột."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM server_settings_cache WHERE id = 1")
+            row = cur.fetchone()
+            columns = [desc[0] for desc in cur.description]
+    finally:
+        conn.close()
+    return dict(zip(columns, row)) if row else {}
+
+
+def get_scan_counts():
+    """Đếm local_scan_records cho heartbeat — TOÀN BỘ (không giới hạn hôm
+    nay, đúng nghĩa "Tổng dữ liệu local đang có" của doc). pending_sync đếm
+    sync_status IN ('PENDING','FAILED_RETRYABLE') — khớp định nghĩa
+    v_pending_sync_scans/idx_local_scan_records_pending_sync đã có sẵn trong
+    schema (không tính SYNCING — đang gửi dở, không phải đang chờ)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*),
+                    COUNT(*) FILTER (WHERE local_status = 'OK'),
+                    COUNT(*) FILTER (WHERE local_status = 'NG'),
+                    COUNT(*) FILTER (WHERE sync_status IN ('PENDING', 'FAILED_RETRYABLE'))
+                FROM local_scan_records
+                """
+            )
+            total, ok, ng, pending = cur.fetchone()
+    finally:
+        conn.close()
+    return {"total": total, "ok": ok, "ng": ng, "pending_sync": pending}
+
+
+def get_command_local_status(server_command_id):
+    """Đọc local_status hiện tại của 1 command đã lưu (None nếu chưa từng
+    thấy) — dùng để dedupe khi commands/poll trả lại command cũ (poll không
+    destructive, command chưa ack có thể xuất hiện lại nhiều lần)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT local_status FROM command_inbox WHERE server_command_id = %s",
+                (server_command_id,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def save_command_received(server_command_id, machine_code, command_type, payload_json, server_status, raw_json):
+    """Lưu/refresh 1 command vừa nhận từ commands/poll, set local_status
+    'RUNNING' (bắt đầu xử lý). Chỉ gọi SAU KHI get_command_local_status() xác
+    nhận command chưa ở trạng thái kết thúc (ACKED/FAILED)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO command_inbox (
+                    server_command_id, machine_code, command_type, payload_json,
+                    server_status, local_status, started_at, raw_json
+                ) VALUES (%s, %s, %s, %s, %s, 'RUNNING', now(), %s)
+                ON CONFLICT (server_command_id) DO UPDATE SET
+                    payload_json = EXCLUDED.payload_json,
+                    server_status = EXCLUDED.server_status,
+                    local_status = 'RUNNING',
+                    started_at = now(),
+                    raw_json = EXCLUDED.raw_json,
+                    updated_at = now()
+                """,
+                (
+                    server_command_id, machine_code, command_type, json.dumps(payload_json),
+                    server_status, json.dumps(raw_json),
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def finish_command(server_command_id, local_status, ack_status=None, error_message=None):
+    """Đóng 1 command sau khi SERVER đã xác nhận nhận ack (gọi từ
+    _handle_command_ack_result, không gọi trước khi gửi ack — nếu lần gọi ack
+    thất bại vì mạng, local_status phải giữ nguyên RUNNING để lần poll sau tự
+    retry toàn bộ, an toàn hơn báo xong trong khi server chưa biết)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE command_inbox
+                SET local_status = %s, ack_status = %s, error_message = %s,
+                    finished_at = now(), ack_sent_at = now(), updated_at = now()
+                WHERE server_command_id = %s
+                """,
+                (local_status, ack_status, error_message, server_command_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_machine_code():
     """Đọc machine_code hiện tại từ local_app_settings (singleton, id=1).
     Trả về 'LOCAL01' nếu bảng chưa được seed (chưa chạy local_app_settings)."""
@@ -350,7 +459,7 @@ def get_machine_code():
 
 def record_full_scan(
     profile_id, qr_data, led_items, is_ok, ng_reason,
-    window_days=DUPLICATE_WINDOW_DAYS, local_scan_id=None,
+    window_days=DUPLICATE_WINDOW_DAYS, local_scan_id=None, scan_at=None,
 ):
     """Ghi 1 phiên quét ĐẦY ĐỦ — 1 sản phẩm = 1 dòng local_scan_records +
     nhiều dòng local_scan_led_items (mỗi item LED BAR 1/2 đã thu thập trong
@@ -367,10 +476,17 @@ def record_full_scan(
         toàn bộ LED item). Hàm này CHỈ chạy kiểm tra trùng khi is_ok=True,
         đúng nguyên tắc "chỉ so OK với OK" — nếu is_ok=False vì lý do khác
         (sai định dạng...), không tra/không chiếm slot trong local_duplicate_keys.
+    scan_at: thời điểm scan — truyền vào để nơi gọi (main_window.py) tái dùng
+        ĐÚNG giá trị này khi build payload POST /api/scans/submit (idempotency
+        yêu cầu không đổi scan_at giữa lần ghi local và lần submit/retry).
+        Mặc định tự tính now() nếu không truyền (gọi độc lập/test).
 
-    Trả về (final_is_ok, final_ng_reason, first_scan_at_neu_trung)."""
+    Trả về (final_is_ok, final_ng_reason, first_scan_at_neu_trung, local_scan_id)
+    — local_scan_id trả ra để nơi gọi dùng làm khoá idempotency khi submit."""
     if local_scan_id is None:
         local_scan_id = new_local_scan_id()
+    if scan_at is None:
+        scan_at = datetime.now().astimezone()
     machine_code = get_machine_code()
     duplicate_key = qr_data.get("duplicate_key") if is_ok else None
 
@@ -410,7 +526,7 @@ def record_full_scan(
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, now()
+                    %s, %s, %s
                 )
                 ON CONFLICT (local_scan_id) DO NOTHING
                 """,
@@ -422,7 +538,7 @@ def record_full_scan(
                     qr_data.get("full_led_code"), qr_data.get("full_factory_code"),
                     qr_data.get("full_after_factory"), qr_data.get("chassis_scan_raw"),
                     json.dumps(full_code_json), json.dumps(led_scans_json),
-                    "OK" if is_ok else "NG", ng_reason,
+                    "OK" if is_ok else "NG", ng_reason, scan_at,
                 ),
             )
 
@@ -485,7 +601,67 @@ def record_full_scan(
     finally:
         conn.close()
 
-    return final_is_ok, final_ng_reason, first_scan_at
+    return final_is_ok, final_ng_reason, first_scan_at, local_scan_id
+
+
+def apply_scan_submit_result(local_scan_id, response):
+    """Cập nhật local_scan_records sau khi nhận response POST /api/scans/submit.
+    SERVER_OK/SERVER_DUPLICATE/LOCAL_NG_SAVED đều success:true — đều là kết
+    quả NGHIỆP VỤ cuối cùng (không phải lỗi mạng), không retry lại."""
+    code = response.get("code")
+    data = response.get("data") or {}
+    if code == "SERVER_OK":
+        server_status, final_status, final_ng_reason = "OK", "OK", None
+    elif code == "SERVER_DUPLICATE":
+        server_status, final_status, final_ng_reason = "NG", "NG", "SERVER_DUPLICATE"
+    elif code == "LOCAL_NG_SAVED":
+        server_status, final_status, final_ng_reason = "SKIPPED", "NG", data.get("ng_reason")
+    else:
+        return
+    now = datetime.now().astimezone()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE local_scan_records
+                SET server_code = %s, server_message = %s, server_scan_id = %s,
+                    server_first_scan_id = %s, server_status = %s,
+                    final_status = %s, final_ng_reason = %s,
+                    sync_status = 'SYNCED', last_sync_at = %s, updated_at = now()
+                WHERE local_scan_id = %s
+                """,
+                (
+                    code, response.get("message"), data.get("server_scan_id"),
+                    data.get("first_scan_record_id"), server_status,
+                    final_status, final_ng_reason, now, local_scan_id,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def mark_scan_submit_failed(local_scan_id, error_code, error_message, blocked=False):
+    """Ghi nhận submit thất bại. blocked=True cho lỗi nghiệp vụ/payload
+    không nên blind-retry (PROFILE_NOT_FOUND, payload bị server bác...) ->
+    FAILED_BLOCKED. blocked=False cho lỗi mạng thuần (còn cơ hội retry ở
+    bước sync/batches/submit sau) -> FAILED_RETRYABLE."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE local_scan_records
+                SET sync_status = %s, sync_attempt_count = sync_attempt_count + 1,
+                    last_error_code = %s, last_error_message = %s, updated_at = now()
+                WHERE local_scan_id = %s
+                """,
+                ("FAILED_BLOCKED" if blocked else "FAILED_RETRYABLE", error_code, error_message, local_scan_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

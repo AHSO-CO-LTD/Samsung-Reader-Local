@@ -13,6 +13,352 @@
   <property name="windowTitle">
    <string>Reader Monitor</string>
   </property>
+  <property name="styleSheet">
+   <string notr="true">/*
+ Palette inspired by the original scanner interface:
+ deep teal workspace, green accents, warm cream inputs and soft blue controls.
+ */
+QMainWindow {
+    background-color: #1F403E;
+    color: #F3F7F5;
+}
+
+QWidget#centralwidget {
+    background-color: #244B48;
+    color: #F3F7F5;
+    font-family: "Segoe UI";
+}
+
+QWidget#widgetResultContainer {
+    background-color: #294F4C;
+    border: 1px solid #76958F;
+    border-radius: 5px;
+}
+
+QWidget#widgetRightPanel {
+    background-color: #1D3D3B;
+    border-left: 2px solid #D9C88F;
+    border-radius: 3px;
+}
+
+QLabel {
+    background-color: transparent;
+    color: #F3F7F5;
+}
+
+QLabel#labelTitle {
+    background-color: #2F8F5B;
+    color: #FFFFFF;
+    border: 2px solid #E0D09A;
+    border-radius: 5px;
+    padding: 7px 22px;
+    font-style: italic;
+}
+
+QLabel#labelRuntimeBanner {
+    background-color: #D88424;
+    color: #FFFFFF;
+    border: 1px solid #F3D19A;
+    border-radius: 4px;
+    padding: 5px 10px;
+}
+
+QPushButton {
+    min-height: 30px;
+    background-color: #B8CDEA;
+    color: #173A3A;
+    border: 1px solid #E6D7A6;
+    border-radius: 4px;
+    padding: 5px 16px;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background-color: #D1DFF2;
+    border-color: #FFF0BF;
+}
+
+QPushButton:pressed {
+    background-color: #91ADD1;
+    padding-top: 7px;
+    padding-bottom: 3px;
+}
+
+QPushButton:disabled {
+    background-color: #6F8586;
+    color: #C3CECB;
+    border-color: #728C88;
+}
+
+QPushButton#pushButtonPlc {
+    background-color: #26784D;
+    color: #FFFFFF;
+}
+
+QPushButton#pushButtonPlc:hover {
+    background-color: #31885A;
+}
+
+QPushButton#pushButtonChangeServerIp {
+    min-height: 22px;
+    padding: 2px 9px;
+    background-color: #B8CDEA;
+}
+
+QPushButton#pushButtonReset {
+    min-height: 30px;
+    background-color: #D84A3A;
+    color: #FFFFFF;
+    border-color: #F0A093;
+}
+
+QPushButton#pushButtonReset:hover {
+    background-color: #EC5B49;
+}
+
+QPushButton#pushButtonReset:disabled {
+    /* rule riêng theo id (#pushButtonReset) có độ ưu tiên cao hơn
+    QPushButton:disabled chung ở trên - phải khai báo lại y hệt ở đây thì
+    nút Reset mới thật sự đổi màu (xám) lúc bị khoá scan, không thì vẫn hiện
+    màu đỏ bình thường dù đã bị disable, dễ gây hiểu lầm cho operator. */
+    background-color: #6F8586;
+    color: #C3CECB;
+    border-color: #728C88;
+}
+
+QGroupBox {
+    background-color: #2E5552;
+    color: #FFFFFF;
+    border: 1px solid #789B95;
+    border-radius: 5px;
+    margin-top: 16px;
+    padding-top: 9px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 11px;
+    padding: 3px 10px;
+    background-color: #277A4E;
+    color: #FFFFFF;
+    border: 1px solid #79B792;
+    border-radius: 3px;
+}
+
+QGroupBox#groupBoxLedBar1,
+QGroupBox#groupBoxLedBar2,
+QGroupBox#groupBoxQrBottom {
+    background-color: #315956;
+}
+
+QLabel#labelLedBar1RefCode,
+QLabel#labelLedBar2RefCode,
+QLabel#labelQrBottomRefCode {
+    min-height: 38px;
+    background-color: #B8CDEA;
+    color: #173A3A;
+    border: 1px solid #DDE7F4;
+    border-radius: 3px;
+    padding: 2px 10px;
+}
+
+QSpinBox,
+QComboBox {
+    min-height: 34px;
+    background-color: #FFF0D7;
+    color: #203B39;
+    border: 1px solid #D7C48E;
+    border-radius: 3px;
+    padding: 3px 8px;
+    selection-background-color: #2F8F5B;
+    selection-color: #FFFFFF;
+}
+
+QSpinBox:focus,
+QComboBox:focus {
+    border: 2px solid #76B995;
+}
+
+QSpinBox:disabled,
+QComboBox:disabled {
+    background-color: #8A9C97;
+    color: #5C6E69;
+    border-color: #728C88;
+}
+
+QSpinBox::up-button,
+QSpinBox::down-button,
+QComboBox::drop-down {
+    width: 24px;
+    background-color: #B8CDEA;
+    border-left: 1px solid #8FA7C3;
+}
+
+QSpinBox::up-button {
+    border-top-right-radius: 3px;
+}
+
+QSpinBox::down-button {
+    border-bottom-right-radius: 3px;
+}
+
+/* QSpinBox::up-arrow/down-arrow, QComboBox::down-arrow: KHÔNG khai báo ở
+đây. url(data:...) base64 KHÔNG được Qt QSS hỗ trợ (chỉ web CSS mới hiểu
+data URI — đã tự kiểm chứng qua screenshot thật, Qt bỏ qua hoàn toàn, hiện
+trống trơn). Kỹ thuật border-triangle (width/height:0 + border) cũng không
+render đúng hình tam giác trong Qt (ra hình chữ nhật). Ảnh mũi tên (file
+PNG thật, ui/icons/arrow_up.png + arrow_down.png) được nạp qua code Python
+(main_window.py, ngay sau uic.loadUi) với đường dẫn tuyệt đối — đúng pattern
+main.py:LOGO_PATH đã dùng cho icon cửa sổ, tránh phụ thuộc thư mục làm việc
+hiện tại lúc chạy app. */
+
+QComboBox::drop-down {
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #FFF8E8;
+    color: #203B39;
+    border: 1px solid #789B95;
+    selection-background-color: #2F8F5B;
+    selection-color: #FFFFFF;
+}
+
+QListWidget {
+    background-color: #173634;
+    color: #F4F8F6;
+    border: 1px solid #789B95;
+    border-radius: 3px;
+    padding: 4px;
+    outline: none;
+}
+
+/* KHÔNG đặt rule QListWidget::item{...} ở đây (kể cả chỉ border/padding,
+không cần background-color) — chỉ cần có box-model property trong
+::item là Qt tự chiếm quyền vẽ nền toàn bộ item, ĐÈ LÊN màu từng item đặt
+qua code (setBackground(), dùng để hiện OK/NG/pending cho từng mã quét) —
+đã tự kiểm chứng bằng screenshot thật, không phải suy đoán. Spacing giữa
+các item dùng setSpacing() trong code (đã có sẵn) thay cho padding/border ở
+đây. */
+
+QProgressBar {
+    min-height: 25px;
+    background-color: #FFF3C9;
+    color: #173A3A;
+    border: 1px solid #D9C88F;
+    border-radius: 4px;
+    text-align: center;
+    font-weight: 600;
+}
+
+QProgressBar::chunk {
+    background-color: #2F8F5B;
+    border-radius: 3px;
+}
+
+QTableWidget {
+    background-color: #F5F7F1;
+    alternate-background-color: #E4EEE9;
+    color: #203B39;
+    gridline-color: #9AB4AF;
+    border: 1px solid #789B95;
+    selection-background-color: #B8CDEA;
+    selection-color: #173A3A;
+}
+
+QHeaderView::section {
+    background-color: #28504E;
+    color: #FFFFFF;
+    border: 0px;
+    border-right: 1px solid #789B95;
+    border-bottom: 1px solid #789B95;
+    padding: 5px;
+    font-weight: 600;
+}
+
+QTableCornerButton::section {
+    background-color: #28504E;
+    border: 0px;
+}
+
+QLabel#labelServerStatus,
+QLabel#labelPendingSync {
+    background-color: #E7EFEA;
+    color: #284744;
+    border: 1px solid #A9BDB8;
+    border-radius: 3px;
+    padding: 2px 6px;
+}
+
+QLabel#labelLotNo {
+    background-color: #E98825;
+    color: #203B39;
+    border: 1px solid #F5B66F;
+    border-radius: 4px;
+    padding: 7px;
+}
+
+QGroupBox#groupBoxResult {
+    background-color: #0C1F1E;
+    border-color: #52736E;
+}
+
+QLabel#labelResultStatus {
+    background-color: #071413;
+    color: #6BA8F2;
+    border: 1px solid #3E625E;
+    border-radius: 4px;
+}
+
+QTextEdit {
+    background-color: #071413;
+    color: #D8E9E4;
+    border: 1px solid #52736E;
+    border-radius: 3px;
+    selection-background-color: #2F8F5B;
+    selection-color: #FFFFFF;
+    padding: 4px;
+}
+
+QScrollBar:vertical {
+    background-color: #193936;
+    width: 13px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #71958E;
+    min-height: 28px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #8DB0A9;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: none;
+    height: 0px;
+}
+
+QStatusBar {
+    background-color: #FFF5C7;
+    color: #203B39;
+    border-top: 1px solid #D9C88F;
+}
+
+QToolTip {
+    background-color: #FFF5C7;
+    color: #203B39;
+    border: 1px solid #789B95;
+    padding: 4px;
+}</string>
+  </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="verticalLayoutMain">
     <item>
@@ -446,7 +792,7 @@
            <property name="maximumSize">
             <size>
              <width>16777215</width>
-             <height>210</height>
+             <height>240</height>
             </size>
            </property>
            <property name="font">
@@ -469,7 +815,7 @@
               <property name="maximumSize">
                <size>
                 <width>16777215</width>
-                <height>120</height>
+                <height>145</height>
                </size>
               </property>
               <property name="font">
@@ -698,18 +1044,54 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButtonReset">
-           <property name="font">
-            <font>
-             <pointsize>13</pointsize>
-             <weight>75</weight>
-             <bold>true</bold>
-            </font>
-           </property>
-           <property name="text">
-            <string>Reset</string>
-           </property>
-          </widget>
+          <layout class="QHBoxLayout" name="horizontalLayoutReset">
+           <item>
+            <spacer name="horizontalSpacerResetLeft">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QPushButton" name="pushButtonReset">
+             <property name="maximumSize">
+              <size>
+               <width>220</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="font">
+              <font>
+               <pointsize>12</pointsize>
+               <weight>75</weight>
+               <bold>true</bold>
+              </font>
+             </property>
+             <property name="text">
+              <string>Reset</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="horizontalSpacerResetRight">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
          </item>
         </layout>
        </widget>

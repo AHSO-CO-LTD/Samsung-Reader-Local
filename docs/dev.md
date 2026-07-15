@@ -28,7 +28,7 @@
 | `db/schema.sql` | DDL đầy đủ 16 bảng — **nguồn chân lý cho schema**, đọc file này thay vì suy luận từ code |
 | `db/local_db_config.json` | Cấu hình kết nối Postgres (có mật khẩu) — **gitignored**, xem mục 6 để biết cách tạo |
 | `db/seed_full_schema.py` | Script dev-only sinh dữ liệu mẫu — xem mục 7 (cạm bẫy) trước khi chạy |
-| `machine/hardware_id.py` | Đọc BIOS UUID + serial mainboard qua PowerShell WMI |
+| `machine/hardware_id.py` | Đọc Windows MachineGuid + BIOS UUID + serial mainboard; định danh dùng MachineGuid làm serial và BIOS UUID làm uid |
 | `machine/identity.py` | `ensure_machine_identity()` — cache serial/uid vào `local_app_settings` |
 | `server/api_client.py` | `SamsungQrServerClient` — REST client, transcribe gần như nguyên văn từ doc API (mục 22 của doc) |
 | `server/server_worker.py` | `ServerWorker(QThread)` — 1 thread nền xử lý hàng đợi job gọi API, không chặn GUI |

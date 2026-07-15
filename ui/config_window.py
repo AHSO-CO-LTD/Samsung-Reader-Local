@@ -41,6 +41,9 @@ class ConfigWindow(QDialog):
 
         self.tableWidgetReaders.horizontalHeader().setStretchLastSection(True)
         self.tableWidgetReaders.setColumnWidth(0, 150)
+        self.tableWidgetReaders.setColumnWidth(1, 130)
+        self.tableWidgetReaders.setColumnWidth(2, 90)
+        self.tableWidgetReaders.setColumnWidth(3, 120)
         self.splitter.setSizes([450, 150])
 
         self.pushButtonAddReader.clicked.connect(self.on_add_reader)

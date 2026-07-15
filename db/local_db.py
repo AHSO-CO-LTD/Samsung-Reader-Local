@@ -488,7 +488,14 @@ def record_full_scan(
     if scan_at is None:
         scan_at = datetime.now().astimezone()
     machine_code = get_machine_code()
-    duplicate_key = qr_data.get("duplicate_key") if is_ok else None
+    # Cột duplicate_key phải luôn khớp ĐÚNG giá trị đã (hoặc sẽ) gửi server
+    # (qr_data["duplicate_key"], tính theo own_is_ok bên main_window.py) —
+    # KHÔNG gate theo is_ok ở đây, chỉ gate is_ok cho việc có insert vào
+    # local_duplicate_keys hay không (xem bên dưới). Trước đây gate nhầm
+    # theo is_ok khiến cột này ra NULL cho case QR bottom hợp lệ nhưng NG vì
+    # LED bar sai — lệch với payload thật đã gửi server, sẽ gây sai lệch khi
+    # Bước 8 (retry/batch submit) đọc lại từ DB để gửi lại.
+    duplicate_key = qr_data.get("duplicate_key")
 
     full_code_json = {
         "raw": qr_data.get("full_code_raw"),

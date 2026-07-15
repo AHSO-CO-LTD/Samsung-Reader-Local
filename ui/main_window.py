@@ -27,6 +27,29 @@ from ui.register_window import RegisterWindow
 UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main_window.ui")
 MAPPING_UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mapping_window.ui")
 
+# Icon mũi tên spinbox/combobox nạp qua code (không phải QSS trong .ui) —
+# url(data:...) base64 không được Qt QSS hỗ trợ, và đường dẫn tương đối
+# trong QSS phụ thuộc thư mục làm việc lúc chạy app — dùng path tuyệt đối
+# tính từ vị trí file này, đúng pattern main.py:LOGO_PATH.
+_ICONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons").replace("\\", "/")
+ARROW_ICONS_STYLESHEET = f"""
+QSpinBox::up-arrow {{
+    image: url({_ICONS_DIR}/arrow_up.png);
+    width: 10px;
+    height: 10px;
+}}
+QSpinBox::down-arrow {{
+    image: url({_ICONS_DIR}/arrow_down.png);
+    width: 10px;
+    height: 10px;
+}}
+QComboBox::down-arrow {{
+    image: url({_ICONS_DIR}/arrow_down.png);
+    width: 12px;
+    height: 12px;
+}}
+"""
+
 STATUS_LABELS = {
     "connecting": "Đang kết nối...",
     "connected": "Đã kết nối",
@@ -101,8 +124,12 @@ RUNTIME_BANNER_STYLES = {
 APP_VERSION = "1.0.0"
 
 RESULT_STYLE = {
-    None: "background-color: palette(window); color: palette(window-text);",
-    "ok": "background-color: #2e7d32; color: white;",
+    # "" (không set gì) -> tự rơi về đúng style mặc định của
+    # QLabel#labelResultStatus khai báo trong main_window.ui (nền tối + chữ
+    # xanh dương theo theme hiện tại) — không hardcode lại màu ở đây để tránh
+    # lệch mỗi khi theme trong .ui đổi mà quên sửa theo ở đây.
+    None: "",
+    "ok": "background-color: #2F8F5B; color: white;",
     "ng": "background-color: #c62828; color: white;",
     # Local đã pass nhưng CHƯA nhận SERVER_OK — theo đúng nguyên tắc "chỉ so
     # OK với OK" (doc mục 6.7/27: không hiển thị final OK khi final_status
@@ -135,6 +162,20 @@ RESULT_ITEM_COLORS = {
 # False/None), còn đây là 1 trạng thái khác hẳn: đã pass local, chưa chốt final.
 PENDING_ITEM_COLOR = QColor("#ffc107")
 
+# Cả RESULT_ITEM_COLORS lẫn PENDING_ITEM_COLOR đều là nền sáng — chữ phải tối
+# màu mới đủ tương phản (khác với nền tối mặc định của QListWidget, nơi chữ
+# sáng theo theme mới lại đúng). Dùng chung 1 màu chữ tối cho mọi item đã đổi
+# nền, không phụ thuộc theme sáng/tối của QListWidget.
+RESULT_ITEM_TEXT_COLOR = QColor("#173A3A")
+
+
+def _apply_item_result_color(item, color):
+    """Đổi cả nền lẫn màu chữ cho 1 item — luôn gọi cặp đôi, không gọi
+    setBackground() riêng lẻ, tránh lặp lại lỗi chữ trắng trên nền sáng khó
+    đọc (đã gặp thật khi thêm theme QSS tối cho QListWidget)."""
+    item.setBackground(color)
+    item.setForeground(RESULT_ITEM_TEXT_COLOR)
+
 # Mã NG cố định (khớp vocabulary docs/10-huong-dan-api-may-local-python.md) để
 # lưu vào local_ng_reason/ng_reason — log hiển thị cho operator luôn dùng câu
 # tiếng Việt tương ứng qua _describe_ng(), không bao giờ lộ mã ra log.
@@ -163,6 +204,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         uic.loadUi(UI_PATH, self)
+        self.setStyleSheet(self.styleSheet() + ARROW_ICONS_STYLESHEET)
 
         self.manager = ReaderManager()
         self._status = {}
@@ -542,7 +584,12 @@ class MainWindow(QMainWindow):
                 "LOCAL_CONFIG_SYNCED", "INFO", "Đã đồng bộ cấu hình",
                 f"{len(profiles)} profile, {len(vendors)} vendor.",
             )
-            self._apply_runtime_status("READY", "Machine is READY.")
+            message = "Machine is READY."
+            update_app_settings(
+                local_runtime_status="READY", local_status_message=message,
+                local_status_updated_at=now,
+            )
+            self._apply_runtime_status("READY", message)
             self._ensure_commands_polling_started()
             self._ensure_heartbeat_started()
             if correlation_id:
@@ -569,10 +616,16 @@ class MainWindow(QMainWindow):
                 f"[{self._now()}] [Heartbeat] Phản hồi không xác định: {response.get('code')} — {response.get('message')}"
             )
             return
-        update_app_settings(last_heartbeat_at=datetime.now().astimezone())
+        now = datetime.now().astimezone()
+        update_app_settings(last_heartbeat_at=now)
         if self._runtime_status == "SERVER_OFFLINE":
             self._append_log(f"[{self._now()}] [Heartbeat] Server đã kết nối lại.")
-            self._apply_runtime_status("READY", "Machine is READY.")
+            message = "Machine is READY."
+            update_app_settings(
+                local_runtime_status="READY", local_status_message=message,
+                local_status_updated_at=now,
+            )
+            self._apply_runtime_status("READY", message)
 
     def _complete_config_triggered_command(self, correlation_id, ok, message):
         """config được gọi vì command SYNC_PROFILE/RELOAD_CONFIG
@@ -899,7 +952,7 @@ class MainWindow(QMainWindow):
         # màu) chạy đúng 1 lần lúc finalize — xem _finalize_scan_session().
         item = QListWidgetItem(_wrap_for_display(text, RESULT_WRAP_CHUNK))
         item.setTextAlignment(Qt.AlignCenter)
-        item.setBackground(RESULT_ITEM_COLORS.get(is_ok, RESULT_ITEM_COLORS[None]))
+        _apply_item_result_color(item, RESULT_ITEM_COLORS.get(is_ok, RESULT_ITEM_COLORS[None]))
         widgets["list"].addItem(item)
         self._received_counts[column_key] += 1
         if self._received_counts[column_key] >= quota:
@@ -1115,7 +1168,7 @@ class MainWindow(QMainWindow):
         # thể chưa đủ nếu QR bottom về trước LED bar. Tới đây, cả phiên đã đủ
         # dữ liệu (progress bar đầy) nên kết quả luôn đúng bất kể thứ tự về.
         own_is_ok, own_code, matched_led_code = self._classify_qr_bottom(qr["text"])
-        qr["item"].setBackground(RESULT_ITEM_COLORS.get(own_is_ok, RESULT_ITEM_COLORS[None]))
+        _apply_item_result_color(qr["item"], RESULT_ITEM_COLORS.get(own_is_ok, RESULT_ITEM_COLORS[None]))
 
         led_ledbar1 = self._session_led_items["ledbar1"]
         led_ledbar2 = self._session_led_items["ledbar2"]
@@ -1154,12 +1207,12 @@ class MainWindow(QMainWindow):
             # SERVER_OK (nguyên tắc "chỉ so OK với OK", doc mục 6.7/27: không
             # hiển thị final OK khi final_status còn PENDING_SERVER). Hiện
             # VÀNG, label CHƯA hiện "OK" — xem _reflect_scan_submit_ui.
-            qr["item"].setBackground(PENDING_ITEM_COLOR)
+            _apply_item_result_color(qr["item"], PENDING_ITEM_COLOR)
             self.set_result_status("pending")
             if local_scan_id is not None:
                 self._pending_scan_ui[local_scan_id] = (self._session_generation, qr["item"])
         else:
-            qr["item"].setBackground(RESULT_ITEM_COLORS[False])
+            _apply_item_result_color(qr["item"], RESULT_ITEM_COLORS[False])
             detail = self._describe_ng(final_reason, qr["text"], entry)
             self._append_log(f"[{self._now()}] [QRCODE BOTTOM] Kết quả sản phẩm: NG ({detail})")
             self.set_result_status("ng")
@@ -1173,12 +1226,15 @@ class MainWindow(QMainWindow):
         self._session_qr = None
 
         # Submit lên server — CẢ OK LẪN NG (doc: "Local NG vẫn gửi server để
-        # lưu trace"), trừ khi thiếu profile_id (bắt buộc — chưa chọn Chassis
-        # Rear thì không đủ dữ liệu hợp lệ để gửi, giữ pending local thôi).
-        if profile_id is not None and local_scan_id is not None:
-            self._submit_scan(local_scan_id, qr_data, led_items_data, profile_id, final_is_ok, final_reason, scan_at)
-        elif profile_id is None:
+        # lưu trace"), kể cả khi QR bottom không tự parse được (duplicate_key/
+        # full_code.led_code = None) — server đã bỏ validate bắt buộc 2 field
+        # này (xác nhận thật 2026-07-15, trả LOCAL_NG_SAVED bình thường kể cả
+        # payload rỗng gần hết). Chỉ bỏ qua khi thiếu profile_id (bắt buộc —
+        # chưa chọn Chassis Rear thì không đủ dữ liệu hợp lệ để gửi).
+        if profile_id is None:
             self._append_log(f"[{self._now()}] [Scan] Bỏ qua submit — chưa chọn Chassis Rear.")
+        elif local_scan_id is not None:
+            self._submit_scan(local_scan_id, qr_data, led_items_data, profile_id, final_is_ok, final_reason, scan_at)
 
         self._refresh_pending_sync_label()
 
@@ -1285,10 +1341,10 @@ class MainWindow(QMainWindow):
         if generation != self._session_generation:
             return
         if code == "SERVER_OK":
-            item.setBackground(RESULT_ITEM_COLORS[True])
+            _apply_item_result_color(item, RESULT_ITEM_COLORS[True])
             self.set_result_status("ok")
         else:
-            item.setBackground(RESULT_ITEM_COLORS[False])
+            _apply_item_result_color(item, RESULT_ITEM_COLORS[False])
             self.set_result_status("ng")
 
     def _refresh_pending_sync_label(self):

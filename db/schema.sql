@@ -777,6 +777,19 @@ SELECT
 FROM local_app_settings
 WHERE id = 1;
 
+-- Seed dòng singleton (id=1) — mọi cột NOT NULL đều có DEFAULT nên chỉ cần
+-- insert id, phần còn lại tự điền đúng giá trị mặc định của schema. Thiếu
+-- bước này thì local_app_settings/server_settings_cache trống hoàn toàn sau
+-- khi cài mới (schema.sql chỉ CREATE TABLE, không tự sinh dòng) — mọi
+-- update_app_settings()/get_app_settings() sau đó đều vô hiệu lặng lẽ (UPDATE
+-- không khớp WHERE id = 1 nào, không báo lỗi), gây ra hàng loạt triệu chứng
+-- khó truy: máy được server APPROVED nhưng Register không hiện trạng thái,
+-- heartbeat gửi machine_code=NULL bị server từ chối "machine_code must be a
+-- string", v.v. ON CONFLICT DO NOTHING để chạy lại schema.sql trên DB đã có
+-- dữ liệu không bị ghi đè cấu hình hiện tại.
+INSERT INTO local_app_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+INSERT INTO server_settings_cache (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
 INSERT INTO schema_migrations (version, name)
 VALUES ('20260713_001', 'initial_local_postgres_schema')
 ON CONFLICT (version) DO NOTHING;

@@ -21,6 +21,7 @@ datas = [
     ("ui/config_window.ui", "ui"),
     ("ui/register_window.ui", "ui"),
     ("ui/mapping_window.ui", "ui"),
+    ("ui/reconcile_window.ui", "ui"),
     ("ui/icons", "ui/icons"),
     ("ui/logo", "ui/logo"),
     ("sound", "sound"),

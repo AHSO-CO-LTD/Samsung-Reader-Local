@@ -76,4 +76,10 @@ class ServerWorker(QThread):
             return self._client.heartbeat(**kwargs)
         if job_kind == "scan_submit":
             return self._client.submit_scan(**kwargs)
+        if job_kind == "batch_submit":
+            return self._client.submit_batch(**kwargs)
+        if job_kind == "reconcile_check":
+            return self._client.reconcile_check(**kwargs)
+        if job_kind == "reconcile_pull":
+            return self._client.reconcile_pull(**kwargs)
         raise ValueError(f"Không hỗ trợ job_kind: {job_kind}")

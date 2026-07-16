@@ -12,9 +12,12 @@ from PyQt5.QtWidgets import (
 from data.duplicate_key import compute_duplicate_key
 from data.mapping_store import load_mappings
 from db.local_db import (
-    add_local_notification, apply_machine_config, apply_scan_submit_result, finish_command,
-    get_app_settings, get_command_local_status, get_scan_counts, get_server_settings,
-    mark_scan_submit_failed, record_full_scan, save_command_received, update_app_settings,
+    add_local_notification, apply_machine_config, apply_reconcile_pull, apply_scan_submit_result,
+    apply_sync_batch_result, build_reconcile_payload, claim_pending_scans_for_batch,
+    claim_specific_scans_for_batch, create_sync_batch, finish_command, get_app_settings,
+    get_command_local_status, get_scan_counts, get_server_settings, mark_scan_submit_failed,
+    mark_sync_batch_failed, new_batch_code, record_full_scan, recover_stuck_syncing_scans,
+    save_command_received, update_app_settings,
 )
 from machine.identity import ensure_machine_identity
 from reader.reader_bridge import ReaderManager
@@ -23,6 +26,7 @@ from server.api_client import SamsungQrServerClient, ServerApiConfig
 from server.server_config import load_server_config, save_server_config
 from server.server_worker import ServerWorker
 from ui.config_window import ConfigWindow
+from ui.reconcile_window import ReconcileWindow
 from ui.register_window import RegisterWindow
 from app_paths import get_bundle_dir
 
@@ -124,7 +128,11 @@ RUNTIME_BANNER_STYLES = {
     "_default": "background-color: #9e9e9e; color: white;",
 }
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
+
+# Mốc dùng lại từ reconcile_pull's take mặc định (server/api_client.py) — doc
+# không cho số cụ thể riêng cho sync/batches/submit.
+BATCH_SUBMIT_MAX_SIZE = 200
 
 RESULT_STYLE = {
     # "" (không set gì) -> tự rơi về đúng style mặc định của
@@ -275,6 +283,23 @@ class MainWindow(QMainWindow):
         # không tự bật, tránh gọi heartbeat trước khi có machine_code/config).
         self._heartbeat_started = False
 
+        # Bước 8 — sync/batches/submit. _batch_in_flight chặn 2 batch chạy
+        # song song (trong 1 tiến trình — 2 tiến trình cùng máy đã bị QLockFile
+        # chặn ở main.py). _batch_command_id: server_command_id nếu batch hiện
+        # tại do lệnh SYNC_SCAN_DATA kích hoạt (cần ack đúng lúc xong), None
+        # nếu do STARTUP/NETWORK_RESTORED/nút Sync Now tự kích hoạt.
+        self._batch_in_flight = False
+        self._batch_command_id = None
+        self._startup_sync_done = False
+
+        # Bước 9 — sync/reconcile/check + sync/reconcile/pull. _reconcile_manual
+        # phân biệt lần check do nút "Check Data" bấm tay (mở ReconcileWindow
+        # nếu có lệch) hay do auto-trigger STARTUP/NETWORK_RESTORED (chỉ log,
+        # không tự mở dialog làm phiền operator đang thao tác).
+        self._reconcile_in_flight = False
+        self._reconcile_manual = False
+        self._startup_reconcile_done = False
+
         self._column_widgets = {
             "ledbar1": {
                 "list": self.listWidgetLedBar1Codes,
@@ -322,6 +347,13 @@ class MainWindow(QMainWindow):
     ######################################################################
 
     def _init_server_worker(self):
+        recovered = recover_stuck_syncing_scans()
+        if recovered:
+            self._append_log(
+                f"[{self._now()}] [Đồng bộ] Phục hồi {recovered} bản ghi kẹt ở SYNCING "
+                "(app đóng/crash giữa lúc đang đồng bộ lần trước) về PENDING."
+            )
+
         self._serial, self._uid = ensure_machine_identity()
         server_config = load_server_config()
         config = ServerApiConfig(host=server_config["host"], port=server_config["port"])
@@ -372,8 +404,6 @@ class MainWindow(QMainWindow):
             self._append_log(f"[{self._now()}] [Định danh máy] Không đọc được serial/UID phần cứng.")
             self._apply_runtime_status("ERROR", RUNTIME_BANNER_TEXT["ERROR"])
 
-        self._refresh_pending_sync_label()
-
     def _check_server_health(self):
         self.server_worker.enqueue("health")
 
@@ -420,6 +450,12 @@ class MainWindow(QMainWindow):
             self._handle_heartbeat_result(data)
         elif job_kind == "scan_submit":
             self._handle_scan_submit_result(correlation_id, data)
+        elif job_kind == "batch_submit":
+            self._handle_batch_submit_response(correlation_id, data)
+        elif job_kind == "reconcile_check":
+            self._handle_reconcile_check_response(data)
+        elif job_kind == "reconcile_pull":
+            self._handle_reconcile_pull_response(data)
 
     def _on_server_call_failed(self, job_kind, correlation_id, error_message, payload):
         if job_kind == "health":
@@ -515,7 +551,27 @@ class MainWindow(QMainWindow):
                 # theo từng scan.
                 mark_scan_submit_failed(local_scan_id, "NETWORK_ERROR", error_message, blocked=False)
                 self._append_log(f"[{self._now()}] [Scan] Lỗi mạng khi gửi scan (id={local_scan_id}): {error_message}")
-            self._refresh_pending_sync_label()
+        elif job_kind == "batch_submit":
+            # Cùng lý do defensive-dual-path như scan_submit ở trên —
+            # BATCH_SUBMIT_PARTIAL_FAILED có success:false trong sample doc,
+            # chưa rõ HTTP status, nên có thể tới qua callFailed dù không
+            # phải lỗi mạng thật.
+            if payload.get("code"):
+                self._handle_batch_submit_response(correlation_id, payload)
+            else:
+                self._handle_batch_submit_network_error(correlation_id, error_message)
+        elif job_kind == "reconcile_check":
+            # Cả 3 code thành công của reconcile/check đều success:true (xác
+            # nhận qua toàn bộ sample doc) — callFailed ở đây luôn là lỗi
+            # THẬT (mạng/MACHINE_NOT_FOUND...), không cần dual-path như
+            # batch_submit. Không notification riêng cho lỗi mạng thuần —
+            # health/heartbeat đã lo, tránh spam.
+            self._reconcile_in_flight = False
+            self._append_log(f"[{self._now()}] [Đối soát] Lỗi khi kiểm tra dữ liệu: {error_message}")
+        elif job_kind == "reconcile_pull":
+            message = f"Pull from Server thất bại: {error_message}"
+            add_local_notification("LOCAL_DB_SYNC_FAILED", "CRITICAL", "Đồng bộ từ server thất bại", message)
+            self._append_log(f"[{self._now()}] [Đối soát] {message}")
 
     def _handle_identity_status_result(self, response):
         code = response.get("code")
@@ -613,6 +669,8 @@ class MainWindow(QMainWindow):
             self._apply_runtime_status("READY", message)
             self._ensure_commands_polling_started()
             self._ensure_heartbeat_started()
+            self._ensure_startup_sync_triggered()
+            self._ensure_startup_reconcile_triggered()
             if correlation_id:
                 self._complete_config_triggered_command(correlation_id, True, None)
 
@@ -630,6 +688,24 @@ class MainWindow(QMainWindow):
         self._heartbeat_timer.setInterval(interval_seconds * 1000)
         self._heartbeat_timer.start()
         self._send_heartbeat()
+
+    def _ensure_startup_sync_triggered(self):
+        """Trigger STARTUP — chỉ 1 lần cho cả vòng đời app (config có thể
+        reload nhiều lần qua lệnh SYNC_PROFILE/RELOAD_CONFIG, không phải mỗi
+        lần reload đều coi là "khởi động lại")."""
+        if self._startup_sync_done:
+            return
+        self._startup_sync_done = True
+        self._maybe_start_sync_batch("STARTUP")
+
+    def _ensure_startup_reconcile_triggered(self):
+        """Trigger STARTUP cho reconcile/check — độc lập với
+        _ensure_startup_sync_triggered (chạy dù batch có pending hay không,
+        đúng flow doc: app mở -> ... -> tuỳ policy reconcile/check)."""
+        if self._startup_reconcile_done:
+            return
+        self._startup_reconcile_done = True
+        self._start_reconcile_check(manual=False)
 
     def _handle_heartbeat_result(self, response):
         if response.get("code") != "HEARTBEAT_ACCEPTED":
@@ -699,10 +775,7 @@ class MainWindow(QMainWindow):
             add_local_notification("LOCAL_SERVER_MESSAGE", "INFO", "Thông báo từ server", message)
             self._ack_command(server_command_id, "ACK")
         elif command_type == "SYNC_SCAN_DATA":
-            message = "Batch sync (POST /api/sync/batches/submit) chưa được triển khai trong bản app này."
-            add_local_notification("LOCAL_COMMAND_FAILED", "WARNING", "Không thể đồng bộ", message)
-            self._append_log(f"[{self._now()}] [Command] {message}")
-            self._ack_command(server_command_id, "FAILED", message)
+            self._maybe_start_sync_batch("MANUAL", command_id=server_command_id)
 
     def _handle_command_ack_result(self, response):
         code = response.get("code")
@@ -714,6 +787,233 @@ class MainWindow(QMainWindow):
             self._append_log(f"[{self._now()}] [Command] Đã ack: id={server_command_id}, status={data.get('status')}")
         else:
             self._append_log(f"[{self._now()}] [Command] Ack không xác định: {code} — {response.get('message')}")
+
+    ######################################################################
+    # Đồng bộ batch (POST /api/sync/batches/submit) — Bước 8
+    ######################################################################
+
+    def _maybe_start_sync_batch(self, trigger_type, command_id=None):
+        """Điểm vào chung cho cả 4 trigger (STARTUP/NETWORK_RESTORED/lệnh
+        SYNC_SCAN_DATA/nút Sync Now). command_id khác None nghĩa là trigger
+        này đến từ 1 command server cần ack lại khi xong (xem
+        _finish_sync_batch)."""
+        if self._batch_in_flight:
+            if command_id is not None:
+                self._ack_command(command_id, "FAILED", "A sync batch is already in progress.")
+            return
+
+        if get_scan_counts()["pending_sync"] == 0:
+            if command_id is not None:
+                # Đúng doc: "Nếu không có pending vẫn có thể ack kèm message local."
+                self._ack_command(command_id, "ACK", "No pending scans to sync.")
+            return
+
+        self._batch_command_id = command_id
+        self._start_sync_batch(trigger_type)
+
+    def _start_sync_batch(self, trigger_type, scan_ids=None):
+        """scan_ids khác None (Bước 9 — nút "Push to Server" trong
+        ReconcileWindow): gửi ĐÚNG danh sách id cụ thể server báo đang thiếu,
+        bất kể sync_status hiện tại. scan_ids=None (mặc định, Bước 8): lấy
+        oldest-N theo sync_status PENDING/FAILED_RETRYABLE như cũ — 100%
+        tương thích ngược."""
+        self._batch_in_flight = True
+        scans_rows = (
+            claim_specific_scans_for_batch(scan_ids) if scan_ids
+            else claim_pending_scans_for_batch(BATCH_SUBMIT_MAX_SIZE)
+        )
+        batch_code = new_batch_code(trigger_type)
+        machine_code = get_app_settings().get("machine_code")
+
+        # Field giống hệt shape scans/submit (Bước 7, xem _submit_scan) —
+        # full_code_json/led_scans_json đọc thẳng từ DB đã đúng shape sẵn.
+        scans_payload = [
+            {
+                "local_scan_id": row["local_scan_id"],
+                # machine_code LẤY TỪ DÒNG ĐÃ CLAIM (không phải máy hiện tại)
+                # — để server tự phát hiện BATCH_MACHINE_CODE_MISMATCH nếu có.
+                "machine_code": row["machine_code"],
+                "serial": self._serial,
+                "uid": self._uid,
+                "profile_id": row["profile_id"],
+                "duplicate_key": row["duplicate_key"],
+                "full_code": row["full_code_json"],
+                "chassis_scan_raw": row["chassis_scan_raw"],
+                "led_scans": row["led_scans_json"],
+                "local_status": row["local_status"],
+                "local_ng_reason": row["local_ng_reason"],
+                "scan_at": row["scan_at"].isoformat(),
+            }
+            for row in scans_rows
+        ]
+
+        request_json = {
+            "batch_code": batch_code, "machine_code": machine_code,
+            "serial": self._serial, "uid": self._uid,
+            "trigger_type": trigger_type, "scans": scans_payload,
+        }
+        create_sync_batch(batch_code, trigger_type, len(scans_payload), request_json)
+
+        message = f"Đang đồng bộ {len(scans_payload)} bản ghi (batch={batch_code})..."
+        update_app_settings(local_runtime_status="SYNCING", local_status_message=message, local_status_updated_at=datetime.now().astimezone())
+        self._apply_runtime_status("SYNCING", message)
+        self._append_log(f"[{self._now()}] [Đồng bộ] {message}")
+
+        self.server_worker.enqueue(
+            "batch_submit", correlation_id=batch_code,
+            batch_code=batch_code, machine_code=machine_code,
+            serial=self._serial, uid=self._uid, trigger_type=trigger_type, scans=scans_payload,
+        )
+
+    def _handle_batch_submit_response(self, batch_code, response):
+        """response tới qua callSucceeded (BATCH_SUBMIT_DONE, HTTP 2xx chắc
+        chắn) HOẶC qua callFailed (BATCH_SUBMIT_PARTIAL_FAILED — sample doc
+        có success:false, chưa rõ HTTP status) — cả 2 đường đều gọi hàm này,
+        chỉ cần thấy data.results là xử lý per-item giống nhau."""
+        data = response.get("data") or {}
+        if not data.get("results"):
+            self._handle_batch_submit_blocked(batch_code, response)
+            return
+
+        result = apply_sync_batch_result(batch_code, response)
+        if result["total_failed"] == 0:
+            add_local_notification(
+                "OFFLINE_SYNC_DONE_OK", "INFO", "Đồng bộ hoàn tất",
+                f"batch={batch_code}: {result['total_ok']} OK, {result['total_ng']} NG.",
+            )
+        else:
+            add_local_notification(
+                "OFFLINE_SYNC_HAS_NG", "WARNING", "Đồng bộ có bản ghi lỗi",
+                f"batch={batch_code}: {result['total_failed']} bản ghi thất bại.",
+            )
+        if any(item.get("code") == "PROFILE_NOT_FOUND" for item in result["failed_items"]):
+            self._check_machine_config()
+
+        self._append_log(
+            f"[{self._now()}] [Đồng bộ] Batch {batch_code} xong: "
+            f"{result['total_ok']} OK, {result['total_ng']} NG, {result['total_failed']} thất bại."
+        )
+        if self._runtime_status == "SYNCING":
+            message = "Machine is READY."
+            update_app_settings(local_runtime_status="READY", local_status_message=message, local_status_updated_at=datetime.now().astimezone())
+            self._apply_runtime_status("READY", message)
+        self._finish_sync_batch(True, None)
+
+    def _handle_batch_submit_blocked(self, batch_code, response):
+        """response KHÔNG có data.results — lỗi cấp batch (MACHINE_NOT_FOUND/
+        MACHINE_IDENTITY_MISMATCH/lỗi nghiệp vụ khác server bác trước khi kịp
+        xử lý từng item). Revert toàn bộ scan đã claim trong batch này."""
+        code = response.get("code")
+        message = response.get("message") or f"Batch submit failed: {code}"
+        identity_error = code in ("MACHINE_NOT_FOUND", "MACHINE_IDENTITY_MISMATCH")
+        mark_sync_batch_failed(batch_code, code, message, blocked=identity_error)
+        self._append_log(f"[{self._now()}] [Đồng bộ] Batch {batch_code} thất bại: {code} — {message}")
+
+        if identity_error:
+            update_app_settings(local_runtime_status="BLOCKED", local_status_message=message, local_status_updated_at=datetime.now().astimezone())
+            self._apply_runtime_status("BLOCKED", message)
+        elif self._runtime_status == "SYNCING":
+            ready_message = "Machine is READY."
+            update_app_settings(local_runtime_status="READY", local_status_message=ready_message, local_status_updated_at=datetime.now().astimezone())
+            self._apply_runtime_status("READY", ready_message)
+
+        self._finish_sync_batch(False, message)
+
+    def _handle_batch_submit_network_error(self, batch_code, error_message):
+        # Lỗi mạng thuần — giữ FAILED_RETRYABLE (blocked=False), trigger sau
+        # tự nhặt lại. Không notification riêng, giống scan_submit đơn lẻ:
+        # LOCAL_SERVER_OFFLINE từ health/heartbeat đã lo, tránh spam.
+        mark_sync_batch_failed(batch_code, "NETWORK_ERROR", error_message, blocked=False)
+        self._append_log(f"[{self._now()}] [Đồng bộ] Lỗi mạng khi gửi batch {batch_code}: {error_message}")
+        if self._runtime_status == "SYNCING":
+            message = "Machine is READY."
+            update_app_settings(local_runtime_status="READY", local_status_message=message, local_status_updated_at=datetime.now().astimezone())
+            self._apply_runtime_status("READY", message)
+        self._finish_sync_batch(False, error_message)
+
+    def _finish_sync_batch(self, ok, message):
+        self._batch_in_flight = False
+        if self._batch_command_id is not None:
+            self._ack_command(self._batch_command_id, "ACK" if ok else "FAILED", None if ok else message)
+            self._batch_command_id = None
+
+    ######################################################################
+    # Đối soát dữ liệu (POST /api/sync/reconcile/check + .../pull) — Bước 9
+    ######################################################################
+
+    def _start_reconcile_check(self, manual):
+        """manual=True: do nút "Check Data" (Register window) kích hoạt —
+        nếu có lệch thì mở ReconcileWindow. manual=False: auto-trigger
+        (STARTUP/NETWORK_RESTORED) — chỉ log/notification, không tự mở
+        dialog làm phiền operator đang thao tác."""
+        if self._reconcile_in_flight:
+            return
+        self._reconcile_in_flight = True
+        self._reconcile_manual = manual
+        payload = build_reconcile_payload()
+        self.server_worker.enqueue(
+            "reconcile_check", correlation_id="reconcile",
+            serial=self._serial, uid=self._uid, ip_address=None, **payload,
+        )
+
+    def _handle_reconcile_check_response(self, response):
+        self._reconcile_in_flight = False
+        code = response.get("code")
+        data = response.get("data") or {}
+
+        if code == "SYNC_RECONCILE_CHECK_READY":
+            add_local_notification(
+                "LOCAL_RECONCILE_SNAPSHOT_READY", "INFO", "Đối soát dữ liệu",
+                "Server chưa đủ dữ liệu để so sánh — cần gửi thêm heartbeat/manifest.",
+            )
+        elif code == "SYNC_RECONCILE_MATCHED":
+            add_local_notification(
+                "LOCAL_RECONCILE_MATCHED", "INFO", "Đối soát dữ liệu",
+                "Dữ liệu local và server khớp nhau.",
+            )
+        elif code == "SYNC_RECONCILE_DIFF_FOUND":
+            diff = data.get("diff") or {}
+            missing_server = len(diff.get("missing_on_server") or [])
+            missing_local = len(diff.get("missing_on_local") or [])
+            changed = len(diff.get("changed_records") or [])
+            add_local_notification(
+                "LOCAL_RECONCILE_DIFF_FOUND", "WARNING", "Đối soát dữ liệu — có lệch",
+                f"Thiếu trên server: {missing_server}, thiếu trên local: {missing_local}, lệch: {changed}.",
+            )
+            if self._reconcile_manual:
+                dlg = ReconcileWindow(
+                    diff, on_push=self._handle_reconcile_push, on_pull=self._handle_reconcile_pull, parent=self,
+                )
+                dlg.exec_()
+        else:
+            self._append_log(f"[{self._now()}] [Đối soát] Phản hồi không xác định: {code} — {response.get('message')}")
+
+    def _handle_reconcile_push(self, local_scan_ids):
+        """Callback từ ReconcileWindow, nút "Push to Server" (Sync theo
+        Local) — tái dùng nguyên hạ tầng batch-submit Bước 8, chỉ khác nguồn
+        claim (theo id cụ thể thay vì oldest-N-pending)."""
+        self._start_sync_batch("MANUAL", scan_ids=local_scan_ids)
+
+    def _handle_reconcile_pull(self, local_scan_ids):
+        """Callback từ ReconcileWindow, nút "Pull from Server" (Sync theo
+        Server, đã gộp cả Review theo quyết định chốt trước khi làm bước
+        này)."""
+        self.server_worker.enqueue(
+            "reconcile_pull", correlation_id="reconcile_pull",
+            serial=self._serial, uid=self._uid, local_scan_ids=local_scan_ids,
+        )
+
+    def _handle_reconcile_pull_response(self, response):
+        records = (response.get("data") or {}).get("records") or []
+        count = apply_reconcile_pull(records)
+        add_local_notification(
+            "LOCAL_SYNC_FROM_SERVER_DONE", "INFO", "Đã đồng bộ từ server",
+            f"{count} bản ghi đã cập nhật theo dữ liệu server.",
+        )
+        self._append_log(f"[{self._now()}] [Đối soát] Pull from Server xong: {count} bản ghi.")
+        # "check lại" đúng theo doc sau khi sync xong — manual=False vì đây là
+        # check XÁC NHẬN, không cần mở lại dialog.
+        self._start_reconcile_check(manual=False)
 
     def _apply_runtime_status(self, status, message=None):
         """Điểm trung tâm gate màn scan chính theo local_runtime_status —
@@ -771,7 +1071,8 @@ class MainWindow(QMainWindow):
             )
 
     def _apply_server_online(self, is_online):
-        changed = self._server_online != is_online
+        was_online = self._server_online
+        changed = was_online != is_online
         self._server_online = is_online
         self.labelServerStatus.setText(SERVER_STATUS_LABELS[is_online])
         self.labelServerStatus.setStyleSheet(SERVER_STATUS_STYLES[is_online])
@@ -789,6 +1090,20 @@ class MainWindow(QMainWindow):
                     "Mất kết nối server", "Health check thất bại — chuyển sang chế độ local-only.",
                 )
 
+        # Trigger NETWORK_RESTORED — bắt buộc so was_online is False (không
+        # phải changed): self._server_online khởi tạo None, lần health-check
+        # đầu tiên None->True cũng làm changed=True nhưng KHÔNG phải "vừa mất
+        # mạng xong có lại", sẽ bắn nhầm trigger ngay lúc cold-boot (đua với
+        # STARTUP, trước khi config/profile sẵn sàng). was_online is False chỉ
+        # đúng lúc offline THẬT SỰ chuyển sang online.
+        if is_online and was_online is False:
+            self._maybe_start_sync_batch("NETWORK_RESTORED")
+            # Gọi độc lập, không chờ batch xong mới check — đơn giản hơn phải
+            # track chính xác "batch này có phải NETWORK_RESTORED không" để
+            # chain đúng thứ tự. Nếu batch chưa xong lúc reconcile chạy, lần
+            # check tiếp theo (auto hoặc bấm "Check Data") sẽ thấy đã khớp.
+            self._start_reconcile_check(manual=False)
+
     ######################################################################
     # Configure
     ######################################################################
@@ -803,7 +1118,12 @@ class MainWindow(QMainWindow):
     ######################################################################
 
     def on_register_clicked(self):
-        dlg = RegisterWindow(self.server_worker, parent=self)
+        dlg = RegisterWindow(
+            self.server_worker,
+            on_sync_now=lambda: self._maybe_start_sync_batch("MANUAL"),
+            on_check_data=lambda: self._start_reconcile_check(manual=True),
+            parent=self,
+        )
         dlg.exec_()
 
     ######################################################################
@@ -1277,8 +1597,6 @@ class MainWindow(QMainWindow):
         elif local_scan_id is not None:
             self._submit_scan(local_scan_id, qr_data, led_items_data, profile_id, final_is_ok, final_reason, scan_at)
 
-        self._refresh_pending_sync_label()
-
     def _build_qr_data(self, text, entry, matched_led_code, duplicate_key):
         entry = entry or {}
         return {
@@ -1368,7 +1686,6 @@ class MainWindow(QMainWindow):
                 "SERVER_DUPLICATE", "ERROR", "Server phát hiện trùng",
                 f"local_scan_id={local_scan_id}",
             )
-        self._refresh_pending_sync_label()
 
     def _reflect_scan_submit_ui(self, local_scan_id, code):
         """Chỉ đụng UI nếu operator CHƯA chuyển sang sản phẩm khác từ lúc
@@ -1387,10 +1704,6 @@ class MainWindow(QMainWindow):
         else:
             _apply_item_result_color(item, RESULT_ITEM_COLORS[False])
             self.set_result_status("ng")
-
-    def _refresh_pending_sync_label(self):
-        count = get_scan_counts().get("pending_sync", 0)
-        self.labelPendingSync.setText(f"Đang chờ đồng bộ: {count}")
 
     ######################################################################
     # Reset — dùng khi NG, xoá mã đã nhận để bắt đầu đợt kiểm mới

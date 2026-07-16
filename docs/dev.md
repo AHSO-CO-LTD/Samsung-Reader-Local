@@ -64,7 +64,7 @@
 5. `record_full_scan()` (`db/local_db.py`) ghi `local_scan_records` + `local_scan_led_items`, tự kiểm tra trùng qua `local_duplicate_keys` — **chỉ kiểm tra trùng khi is_ok=True** ("chỉ so OK với OK", không chiếm slot dedupe nếu NG vì lý do khác).
 6. Kết quả hiển thị qua `set_result_status()` — nền xanh/đỏ ở `labelResultStatus`.
 
-**Việc CHƯA làm**: gửi kết quả lên server (`POST /api/scans/submit`). Khi làm, đã thống nhất trước UX: sau khi local OK, item QR bottom chuyển **VÀNG** (không phải xanh ngay), `labelResultStatus` CHƯA hiện "OK" — chỉ khi server xác nhận `SERVER_OK` mới chuyển xanh + hiện "OK". Nguyên tắc: "chỉ so OK với OK" áp dụng cả với việc chờ server, không tự ý coi local-OK là final.
+**Gửi kết quả lên server (`POST /api/scans/submit`, Bước 7 — đã xong)**: UX đã thống nhất và đang chạy đúng — sau khi local OK, item QR bottom chuyển **VÀNG** (không phải xanh ngay), `labelResultStatus` CHƯA hiện "OK" — chỉ khi server xác nhận `SERVER_OK` mới chuyển xanh + hiện "OK". Nguyên tắc: "chỉ so OK với OK" áp dụng cả với việc chờ server, không tự ý coi local-OK là final.
 
 ## 4. Tích hợp server — đã làm tới đâu
 
@@ -76,15 +76,16 @@ Theo dõi theo "Bước" (từng bước 1 API/nhóm API nhỏ, làm xong + test
 | 2 | `POST /api/machines/register-request` + `GET .../register-requests/:id/status` | ✅ Xong. Dialog riêng, auto-poll khi PENDING | `ui/register_window.py` |
 | 3 | `GET /api/machines/identity/status` | ✅ Xong. Tự gọi lúc mở app + định kỳ khi chưa READY. **Gate màn scan chính** theo `local_runtime_status` | `main_window.py` (`_handle_identity_status_result`, `_apply_runtime_status`) |
 | 4 | `GET /api/machines/config` | ✅ Xong, đã verify với server thật. Tự gọi ngay sau khi identity/status APPROVED. Ghi `machine_cache`/`server_settings_cache`/`profile_cache`/`profile_led_code_cache`/`vendor_cache`/`command_inbox` | `main_window.py` (`_handle_config_result`), `db/local_db.py` (`apply_machine_config`) |
-| 5+ | `commands/poll` + `commands/:id/ack` | ❌ Chưa làm. `command_inbox` đã có data (`pending_commands` từ config) nhưng CHƯA xử lý/ack | — |
-| — | `heartbeat` | ❌ Chưa làm | — |
-| — | `scans/submit` | ❌ Chưa làm — xem UX vàng/xanh ở mục 3 | — |
-| — | `sync/batches/submit`, `sync/reconcile/*` | ❌ Chưa làm | — |
+| 5 | `commands/poll` + `commands/:id/ack` | ✅ Xong, đã verify với server thật. `SYNC_PROFILE`/`RELOAD_CONFIG`/`SHOW_MESSAGE` xử lý đầy đủ; `SYNC_SCAN_DATA` xử lý ở Bước 8 | `main_window.py` (`_handle_commands_poll_result`, `_process_command`) |
+| 6 | `heartbeat` | ✅ Xong, đã verify với server thật | `main_window.py` (`_send_heartbeat`, `_handle_heartbeat_result`) |
+| 7 | `scans/submit` | ✅ Xong, đã verify với server thật — UX vàng/xanh theo mục 3 | `main_window.py` (`_submit_scan`, `_handle_scan_submit_result`) |
+| 8 | `sync/batches/submit` | ✅ Xong, đã verify với server thật (2026-07-16) — xem `docs/pending_live_test.md` | `main_window.py` (`_maybe_start_sync_batch`, `_start_sync_batch`, `_handle_batch_submit_response`), `db/local_db.py` (`claim_pending_scans_for_batch`, `apply_sync_batch_result`) |
+| 9 | `sync/reconcile/check` + `sync/reconcile/pull` | ✅ Xong, đã verify với server thật (2026-07-16) — dialog `ReconcileWindow` mở qua nút "Check Data" (Register window). Review gộp vào Pull from Server (không có checkbox từng dòng) | `main_window.py` (`_start_reconcile_check`, `_handle_reconcile_check_response`, `_handle_reconcile_push`/`_pull`), `db/local_db.py` (`build_reconcile_payload`, `claim_specific_scans_for_batch`, `apply_reconcile_pull`), `ui/reconcile_window.py` |
 | — | Socket.IO `/machine-runtime` | ❌ Chưa làm — cần `machine_code` (đã có) + config (đã có) + khái niệm "Start/Stop 1 lượt chạy" (main_window CHƯA có nút này) | — |
 
 **`data/mapping_store.py` đã đổi nguồn dữ liệu (Bước 4)**: trước đây là list Python hardcode (`_MOCK_MAPPINGS`), giờ đọc thật từ `profile_cache`/`profile_led_code_cache` (đã sync từ server). Đây là logic **quyết định OK/NG** — nếu combobox Chassis Rear trống hoặc sai, kiểm tra `profile_cache WHERE is_active=true` trước, không phải sửa `mapping_store.py`.
 
-### Cách thêm 1 endpoint mới (đã lặp lại 4 lần, quy trình ổn định)
+### Cách thêm 1 endpoint mới (đã lặp lại nhiều lần qua Bước 1-9, quy trình ổn định)
 
 1. `server/api_client.py`: thêm method gọi `self._request(method, path, "ten_request_type", ...)` — hầu hết method đã transcribe sẵn từ doc mục 22, có thể đã có sẵn, chỉ cần dùng.
 2. `server/server_worker.py`: thêm 1 nhánh trong `_dispatch()` map `job_kind` → method ở bước 1.
@@ -137,6 +138,7 @@ Chỉ `READY`/`SCANNING`/`SYNCING` (`SCAN_ENABLED_STATUSES` trong `main_window.p
 - **`db/seed_full_schema.py` vẫn TRUNCATE `local_app_settings`** mỗi lần chạy (registration_status, machine_code, machine_serial/uid...) — chạy lại script này trên máy đã đăng ký thật với server SẼ xoá mất tiến trình đăng ký. 5 bảng cache (`profile_cache` và 4 bảng liên quan) đã đổi sang `ON CONFLICT DO NOTHING` nên an toàn hơn, nhưng `local_app_settings` thì chưa — cân nhắc trước khi chạy trên máy có dữ liệu thật.
 - **Dữ liệu đăng ký máy trên server dev/test có thể tự đổi** ngoài ý muốn của local (quan sát được nhiều lần trong quá trình phát triển: APPROVED → DISABLED → NOT_REGISTERED → APPROVED lại, không phải do bug local). App được thiết kế để tự đồng bộ lại theo bất cứ gì server trả về (server là nguồn chân lý) — đừng ngạc nhiên nếu trạng thái đổi giữa các lần mở app, đó là app đang hoạt động đúng.
 - **Console Windows không in được tiếng Việt có dấu trực tiếp** (cp1252) khi chạy script rời qua Bash tool — dùng `PYTHONIOENCODING=utf-8` + redirect ra file rồi đọc file, đừng in thẳng ra stdout.
+- **`sync/reconcile/check` bác NGUYÊN CẢ request (400) nếu BẤT KỲ record nào trong `records[]` có `server_status`/`final_status` ngoài enum server chấp nhận** (`server_status`: `OK/NG/SKIPPED`; `final_status`: `OK/NG` — KHÔNG nhận `PENDING`/`PENDING_SERVER`, dù đó là default schema của `local_scan_records` cho record chưa từng được server xác nhận, vd `FAILED_BLOCKED` do lỗi cấp batch). Phát hiện thật (lỗi 400 thật) khi build Bước 9 — `db/local_db.py:build_reconcile_payload` đã ép các giá trị này về đúng enum trước khi gửi (`SKIPPED`/`local_status` làm giá trị thay thế) — nếu sau này thêm field mới vào manifest, kiểm tra lại enum server chấp nhận trước, đừng gửi thẳng giá trị cột DB thô.
 - **Repo mới có git từ 2026-07-14** (sau khi đã làm xong Bước 1-4) — lịch sử trước đó không có trong git. `.gitignore` loại trừ `venv/`, `__pycache__/`, 3 file cấu hình ở mục 6, `legacy_dotnet_sdk_approach/`.
 - **`register_window.py` tự poll bằng `request_id`, `main_window.py` tự poll `identity/status` bằng `serial+uid`** — 2 cơ chế ĐỘC LẬP, chạy song song, cùng ghi `local_app_settings`. Có thể lệch nhịp vài giây nếu cả 2 cùng chạy (dialog đang mở + app đang chạy nền), nhưng tự đồng bộ lại ở lần poll kế tiếp — không cần khoá chéo.
 - **Không dùng mock server để test** — luôn test với server thật/dev (địa chỉ đổi qua `server_config.json`). Tự tắt mọi instance app đã tự mở để test xong việc.

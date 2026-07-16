@@ -8,6 +8,7 @@ db/local_db_config.json.
 
 import json
 import os
+import random
 import uuid
 from datetime import datetime, timedelta
 
@@ -528,6 +529,14 @@ def record_full_scan(
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            # profile_id NULL nghĩa là operator chưa chọn Chassis Rear lúc quét —
+            # _finalize_scan_session chỉ skip submit cho case này, KHÔNG skip
+            # record_full_scan, nên dòng này vẫn được ghi. Nếu để sync_status
+            # rơi về default 'PENDING' của schema, Bước 8 (claim_pending_scans_for_batch)
+            # sẽ nhặt và cố gửi lên server với profile_id=null — chắc chắn bị
+            # bác. 'LOCAL_ONLY' đúng ý nghĩa "không bao giờ định gửi", loại
+            # hẳn khỏi WHERE của claim (xem claim_pending_scans_for_batch).
+            sync_status = "LOCAL_ONLY" if profile_id is None else "PENDING"
             cur.execute(
                 """
                 INSERT INTO local_scan_records (
@@ -535,13 +544,13 @@ def record_full_scan(
                     full_code_raw, full_prefix, full_chassis_segment, full_chassis_code,
                     full_before_vendor, full_vendor_char, full_led_code, full_factory_code,
                     full_after_factory, chassis_scan_raw, full_code_json, led_scans_json,
-                    local_status, local_ng_reason, scan_at
+                    local_status, local_ng_reason, scan_at, sync_status
                 ) VALUES (
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s
+                    %s, %s, %s, %s
                 )
                 ON CONFLICT (local_scan_id) DO NOTHING
                 """,
@@ -553,7 +562,7 @@ def record_full_scan(
                     qr_data.get("full_led_code"), qr_data.get("full_factory_code"),
                     qr_data.get("full_after_factory"), qr_data.get("chassis_scan_raw"),
                     json.dumps(full_code_json), json.dumps(led_scans_json),
-                    "OK" if is_ok else "NG", ng_reason, scan_at,
+                    "OK" if is_ok else "NG", ng_reason, scan_at, sync_status,
                 ),
             )
 
@@ -619,10 +628,17 @@ def record_full_scan(
     return final_is_ok, final_ng_reason, first_scan_at, local_scan_id
 
 
-def apply_scan_submit_result(local_scan_id, response):
+def apply_scan_submit_result(local_scan_id, response, conn=None):
     """Cập nhật local_scan_records sau khi nhận response POST /api/scans/submit.
     SERVER_OK/SERVER_DUPLICATE/LOCAL_NG_SAVED đều success:true — đều là kết
-    quả NGHIỆP VỤ cuối cùng (không phải lỗi mạng), không retry lại."""
+    quả NGHIỆP VỤ cuối cùng (không phải lỗi mạng), không retry lại.
+
+    conn=None (mặc định, dùng cho submit đơn lẻ Bước 7): tự mở/commit/đóng
+    connection như cũ. conn khác None (dùng cho batch — Bước 8
+    apply_sync_batch_result): dùng chung connection của caller, KHÔNG tự
+    commit/đóng — caller chịu trách nhiệm transaction cho cả loạt, tránh mở
+    lại kết nối DB tới hàng trăm lần trên GUI thread khi xử lý 1 response
+    batch."""
     code = response.get("code")
     data = response.get("data") or {}
     if code == "SERVER_OK":
@@ -634,7 +650,9 @@ def apply_scan_submit_result(local_scan_id, response):
     else:
         return
     now = datetime.now().astimezone()
-    conn = get_connection()
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -652,17 +670,23 @@ def apply_scan_submit_result(local_scan_id, response):
                     final_status, final_ng_reason, now, local_scan_id,
                 ),
             )
-        conn.commit()
+        if owns_conn:
+            conn.commit()
     finally:
-        conn.close()
+        if owns_conn:
+            conn.close()
 
 
-def mark_scan_submit_failed(local_scan_id, error_code, error_message, blocked=False):
+def mark_scan_submit_failed(local_scan_id, error_code, error_message, blocked=False, conn=None):
     """Ghi nhận submit thất bại. blocked=True cho lỗi nghiệp vụ/payload
     không nên blind-retry (PROFILE_NOT_FOUND, payload bị server bác...) ->
     FAILED_BLOCKED. blocked=False cho lỗi mạng thuần (còn cơ hội retry ở
-    bước sync/batches/submit sau) -> FAILED_RETRYABLE."""
-    conn = get_connection()
+    bước sync/batches/submit sau) -> FAILED_RETRYABLE.
+
+    conn: xem docstring apply_scan_submit_result — cùng quy ước."""
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -674,9 +698,425 @@ def mark_scan_submit_failed(local_scan_id, error_code, error_message, blocked=Fa
                 """,
                 ("FAILED_BLOCKED" if blocked else "FAILED_RETRYABLE", error_code, error_message, local_scan_id),
             )
+        if owns_conn:
+            conn.commit()
+    finally:
+        if owns_conn:
+            conn.close()
+
+
+######################################################################
+# Bước 8 — POST /api/sync/batches/submit
+######################################################################
+
+def recover_stuck_syncing_scans():
+    """Đưa mọi dòng đang kẹt ở sync_status='SYNCING' về lại 'PENDING' — xảy
+    ra khi app bị đóng/crash giữa lúc 1 batch đang gửi dở (đã claim, response
+    chưa kịp xử lý). Gọi đúng 1 lần lúc khởi động, TRƯỚC mọi thao tác sync
+    khác. Trả về số dòng đã phục hồi (để log nếu > 0)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE local_scan_records SET sync_status = 'PENDING', updated_at = now() "
+                "WHERE sync_status = 'SYNCING'"
+            )
+            count = cur.rowcount
         conn.commit()
     finally:
         conn.close()
+    return count
+
+
+def claim_pending_scans_for_batch(limit):
+    """Lấy tối đa `limit` scan đang chờ đồng bộ (PENDING/FAILED_RETRYABLE),
+    cũ nhất trước, và NGAY LẬP TỨC chuyển sang SYNCING (claim) trong cùng
+    transaction — tránh 2 lần gọi chồng nhau lấy trùng dòng. Trả về
+    list[dict] đủ field để build payload scans[] gửi server — full_code_json/
+    led_scans_json đã đúng shape sẵn (xem record_full_scan), không cần join
+    local_scan_led_items.
+
+    profile_id IS NOT NULL loại các dòng LOCAL_ONLY (chưa chọn Chassis Rear
+    lúc quét — không có profile để server so khớp)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT local_scan_id, machine_code, profile_id, duplicate_key,
+                       full_code_json, chassis_scan_raw, led_scans_json,
+                       local_status, local_ng_reason, scan_at
+                FROM local_scan_records
+                WHERE sync_status IN ('PENDING', 'FAILED_RETRYABLE') AND profile_id IS NOT NULL
+                ORDER BY scan_at ASC
+                LIMIT %s
+                FOR UPDATE
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+            scans = [dict(zip(columns, row)) for row in rows]
+
+            if scans:
+                local_scan_ids = [s["local_scan_id"] for s in scans]
+                cur.execute(
+                    "UPDATE local_scan_records SET sync_status = 'SYNCING', updated_at = now() "
+                    "WHERE local_scan_id = ANY(%s)",
+                    (local_scan_ids,),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+    return scans
+
+
+def new_batch_code(trigger_type):
+    """Format theo docs/10-huong-dan-api-may-local-python mục 20:
+    {machine_code}-{yyyyMMddHHmmss}-{trigger_type}-{sequence_4_digits}.
+
+    Dùng random 4 chữ số thay vì 1 counter DB riêng (bảng id_counters có sẵn
+    trong schema nhưng KHÔNG được new_local_scan_id() hay bất kỳ đâu trong
+    code hiện tại dùng thật — new_local_scan_id() cũng chỉ ghép timestamp +
+    uuid ngắn). Batch hiếm khi tạo dồn dập: _batch_in_flight chặn cứng trong
+    1 tiến trình, QLockFile (đóng gói) chặn 2 tiến trình cùng chạy trên 1
+    máy — không cần dựng cơ chế đếm DB mới chỉ cho 1 chỗ dùng."""
+    machine_code = get_machine_code()
+    now = datetime.now()
+    return f"{machine_code}-{now:%Y%m%d%H%M%S}-{trigger_type}-{random.randint(0, 9999):04d}"
+
+
+def create_sync_batch(batch_code, trigger_type, total_sent, request_json, summary_json=None):
+    """Ghi 1 dòng sync_batches trước khi gửi HTTP — request_json lưu nguyên
+    body sẽ gửi (kể cả scans[]), dùng làm nguồn revert nếu batch fail toàn bộ
+    (xem mark_sync_batch_failed)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO sync_batches (
+                    batch_code, trigger_type, total_sent, status, request_json, summary_json, started_at
+                ) VALUES (%s, %s, %s, 'SENDING', %s, %s, now())
+                """,
+                (batch_code, trigger_type, total_sent, json.dumps(request_json), json.dumps(summary_json or {})),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def apply_sync_batch_result(batch_code, response):
+    """Áp response BATCH_SUBMIT_DONE/BATCH_SUBMIT_PARTIAL_FAILED — CHỈ gọi
+    khi response có data.results (xem _handle_batch_submit_response trong
+    main_window.py). Ghi kết quả từng scan (dùng lại apply_scan_submit_result/
+    mark_scan_submit_failed, cùng 1 connection cho cả loạt), ghi sync_batch_items,
+    và TỰ TÍNH total_ok/total_ng/total_failed/status từ results[] thay vì tin
+    data.batch.status/total_* của server (sample doc PARTIAL_FAILED có
+    batch.status="FAILED" dù chỉ 1/2 item lỗi).
+
+    Trả về {"total_ok","total_ng","total_failed","failed_items":[...]} cho
+    main_window.py quyết định notification/policy UI."""
+    data = response.get("data") or {}
+    results = data.get("results") or []
+
+    total_ok = total_ng = total_failed = 0
+    failed_items = []
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            for item in results:
+                local_scan_id = item.get("local_scan_id")
+                success = bool(item.get("success"))
+                code = item.get("code")
+
+                if success:
+                    apply_scan_submit_result(local_scan_id, item, conn=conn)
+                    if code == "SERVER_OK":
+                        total_ok += 1
+                    else:
+                        total_ng += 1
+                else:
+                    mark_scan_submit_failed(local_scan_id, code, item.get("message"), blocked=True, conn=conn)
+                    total_failed += 1
+                    failed_items.append({"local_scan_id": local_scan_id, "code": code, "message": item.get("message")})
+
+                cur.execute(
+                    """
+                    INSERT INTO sync_batch_items (
+                        batch_id, local_scan_id, result_success, result_code, result_message,
+                        server_scan_id, response_json
+                    )
+                    SELECT id, %s, %s, %s, %s, %s, %s
+                    FROM sync_batches WHERE batch_code = %s
+                    ON CONFLICT (batch_id, local_scan_id) DO UPDATE SET
+                        result_success = EXCLUDED.result_success,
+                        result_code = EXCLUDED.result_code,
+                        result_message = EXCLUDED.result_message,
+                        server_scan_id = EXCLUDED.server_scan_id,
+                        response_json = EXCLUDED.response_json,
+                        updated_at = now()
+                    """,
+                    (
+                        local_scan_id, success, code, item.get("message"),
+                        (item.get("data") or {}).get("server_scan_id"),
+                        json.dumps(item), batch_code,
+                    ),
+                )
+
+            status = "DONE" if total_failed == 0 else "PARTIAL_FAILED"
+            cur.execute(
+                """
+                UPDATE sync_batches
+                SET status = %s, total_ok = %s, total_ng = %s, total_failed = %s,
+                    server_batch_id = %s, response_json = %s, finished_at = now(), updated_at = now()
+                WHERE batch_code = %s
+                """,
+                (status, total_ok, total_ng, total_failed, data.get("batch", {}).get("id"), json.dumps(response), batch_code),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"total_ok": total_ok, "total_ng": total_ng, "total_failed": total_failed, "failed_items": failed_items}
+
+
+def mark_sync_batch_failed(batch_code, error_code, error_message, blocked):
+    """Fallback khi response batch KHÔNG có data.results (lỗi cấp batch —
+    MACHINE_NOT_FOUND/MACHINE_IDENTITY_MISMATCH/lỗi mạng thuần). Đọc lại danh
+    sách local_scan_id từ chính request_json đã lưu lúc create_sync_batch,
+    revert TOÀN BỘ scan đã claim trong batch này về FAILED_BLOCKED (lỗi định
+    danh — blocked=True) hoặc FAILED_RETRYABLE (lỗi mạng — blocked=False, sẽ
+    được trigger sau tự nhặt lại)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT request_json FROM sync_batches WHERE batch_code = %s", (batch_code,))
+            row = cur.fetchone()
+            request_json = row[0] if row else {}
+            scans = request_json.get("scans") or []
+
+            for scan in scans:
+                mark_scan_submit_failed(scan.get("local_scan_id"), error_code, error_message, blocked=blocked, conn=conn)
+
+            cur.execute(
+                """
+                UPDATE sync_batches
+                SET status = 'FAILED', error_message = %s, finished_at = now(), updated_at = now()
+                WHERE batch_code = %s
+                """,
+                (error_message, batch_code),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+######################################################################
+# Bước 9 — POST /api/sync/reconcile/check + POST /api/sync/reconcile/pull
+######################################################################
+
+def build_reconcile_payload():
+    """Dựng payload cho POST /api/sync/reconcile/check — LUÔN gửi kèm
+    records[] đầy đủ (dữ liệu 1 máy QA hiện chỉ vài chục dòng, còn xa mức
+    trần 10.000 dòng/request của doc) để server trả được diff CỤ THỂ
+    (missing_on_server/missing_on_local/changed_records) thay vì chỉ so
+    tổng số — không có records[] thì không đủ để hiển thị dialog cho người
+    dùng chọn hướng xử lý.
+
+    from_scan_at lấy đúng bằng MIN(scan_at) hiện có (None nếu chưa có scan
+    nào) — khớp CHÍNH XÁC phạm vi đã liệt kê trong records[], tránh server tự
+    suy luận phạm vi khác với những gì local thực gửi.
+
+    server_status/final_status ÉP về đúng enum server chấp nhận cho manifest
+    (server_status: OK/NG/SKIPPED, final_status: OK/NG — xác nhận qua lỗi
+    400 thật khi gửi thẳng giá trị thô) — bản ghi CHƯA từng được server xác
+    nhận (vd FAILED_BLOCKED do BATCH_MACHINE_CODE_MISMATCH/PROFILE_NOT_FOUND,
+    chưa từng nhận SERVER_OK/SERVER_DUPLICATE/LOCAL_NG_SAVED) vẫn còn nguyên
+    giá trị mặc định schema server_status='PENDING'/final_status='PENDING_SERVER'
+    — 2 giá trị này KHÔNG nằm trong enum server chấp nhận, gửi thẳng làm
+    toàn bộ request bị bác với lỗi 400 (không phải chỉ riêng bản ghi đó).
+    SKIPPED đúng nghĩa "server chưa từng xác nhận"; final_status dùng tạm
+    local_status (luôn chỉ OK/NG) làm giá trị gần đúng nhất khi chưa có kết
+    luận server."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT local_scan_id, profile_id, duplicate_key, local_status,
+                       server_status, final_status, final_ng_reason, scan_at
+                FROM local_scan_records
+                ORDER BY scan_at
+                """
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    records = [
+        {
+            "local_scan_id": r[0],
+            "profile_id": r[1],
+            "duplicate_key": r[2],
+            "local_status": r[3],
+            "server_status": r[4] if r[4] in ("OK", "NG", "SKIPPED") else "SKIPPED",
+            "final_status": r[5] if r[5] in ("OK", "NG") else r[3],
+            "ng_reason": r[6],
+            "scan_at": r[7].isoformat(),
+        }
+        for r in rows
+    ]
+    total = len(records)
+    ok = sum(1 for r in records if r["local_status"] == "OK")
+
+    return {
+        "from_scan_at": rows[0][7].isoformat() if rows else None,
+        "to_scan_at": datetime.now().astimezone().isoformat(),
+        "local_total_record": total,
+        "local_ok_record": ok,
+        "local_ng_record": total - ok,
+        "records": records,
+    }
+
+
+def claim_specific_scans_for_batch(local_scan_ids):
+    """Giống claim_pending_scans_for_batch (Bước 8) nhưng lọc theo DANH SÁCH
+    id cụ thể (từ suggested_actions.sync_local_to_server của reconcile/check)
+    thay vì lọc theo sync_status/LIMIT — server đã chủ động báo "đang thiếu
+    record này", cần gửi lại BẤT KỂ local đang nghĩ sync_status là gì (kể cả
+    đã SYNCED nhưng server báo mất)."""
+    if not local_scan_ids:
+        return []
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT local_scan_id, machine_code, profile_id, duplicate_key,
+                       full_code_json, chassis_scan_raw, led_scans_json,
+                       local_status, local_ng_reason, scan_at
+                FROM local_scan_records
+                WHERE local_scan_id = ANY(%s) AND profile_id IS NOT NULL
+                ORDER BY scan_at ASC
+                FOR UPDATE
+                """,
+                (local_scan_ids,),
+            )
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+            scans = [dict(zip(columns, row)) for row in rows]
+
+            if scans:
+                claimed_ids = [s["local_scan_id"] for s in scans]
+                cur.execute(
+                    "UPDATE local_scan_records SET sync_status = 'SYNCING', updated_at = now() "
+                    "WHERE local_scan_id = ANY(%s)",
+                    (claimed_ids,),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+    return scans
+
+
+def apply_reconcile_pull(records):
+    """Upsert kết quả POST /api/sync/reconcile/pull vào local_scan_records +
+    local_scan_led_items — server là nguồn CHÂN LÝ trong flow này (người
+    dùng đã chủ động chọn "Sync theo Server" ở dialog reconcile), ghi đè
+    không hỏi lại per-field.
+
+    Bỏ qua field ng_stage của response (khái niệm mới phía server, schema
+    local chưa có cột tương ứng — suy ra gần đúng được từ final_ng_reason/
+    server_status sẵn có) và full_chassis_segment (server không trả field
+    này, chỉ có ở payload tự parse local — để NULL, không dùng để quyết định
+    OK/NG ở đâu cả).
+
+    Trả về số record đã upsert thành công."""
+    conn = get_connection()
+    count = 0
+    try:
+        with conn.cursor() as cur:
+            for r in records:
+                local_scan_id = r["local_scan_id"]
+                full_code = r.get("full_code") or {}
+                led_scans = r.get("led_scans") or []
+
+                cur.execute(
+                    """
+                    INSERT INTO local_scan_records (
+                        local_scan_id, machine_code, profile_id, duplicate_key,
+                        full_code_raw, full_prefix, full_chassis_segment, full_chassis_code,
+                        full_before_vendor, full_vendor_char, full_led_code, full_factory_code,
+                        full_after_factory, chassis_scan_raw, full_code_json, led_scans_json,
+                        local_status, server_code, server_scan_id, server_status,
+                        final_status, final_ng_reason, sync_status, last_sync_at, scan_at
+                    ) VALUES (
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, 'SYNCED', now(), %s
+                    )
+                    ON CONFLICT (local_scan_id) DO UPDATE SET
+                        profile_id = EXCLUDED.profile_id,
+                        duplicate_key = EXCLUDED.duplicate_key,
+                        full_code_raw = EXCLUDED.full_code_raw,
+                        full_prefix = EXCLUDED.full_prefix,
+                        full_chassis_code = EXCLUDED.full_chassis_code,
+                        full_before_vendor = EXCLUDED.full_before_vendor,
+                        full_vendor_char = EXCLUDED.full_vendor_char,
+                        full_led_code = EXCLUDED.full_led_code,
+                        full_factory_code = EXCLUDED.full_factory_code,
+                        full_after_factory = EXCLUDED.full_after_factory,
+                        chassis_scan_raw = EXCLUDED.chassis_scan_raw,
+                        full_code_json = EXCLUDED.full_code_json,
+                        led_scans_json = EXCLUDED.led_scans_json,
+                        local_status = EXCLUDED.local_status,
+                        server_code = EXCLUDED.server_code,
+                        server_scan_id = EXCLUDED.server_scan_id,
+                        server_status = EXCLUDED.server_status,
+                        final_status = EXCLUDED.final_status,
+                        final_ng_reason = EXCLUDED.final_ng_reason,
+                        sync_status = 'SYNCED',
+                        last_sync_at = now(),
+                        scan_at = EXCLUDED.scan_at,
+                        updated_at = now()
+                    """,
+                    (
+                        local_scan_id, r.get("machine_code") or get_machine_code(), r.get("profile_id"), r.get("duplicate_key"),
+                        full_code.get("raw") or "", full_code.get("prefix"), None, full_code.get("chassis_code"),
+                        full_code.get("before_vendor"), full_code.get("vendor_char"), full_code.get("led_code"), full_code.get("factory_code"),
+                        full_code.get("after_factory"), r.get("chassis_scan_raw"), json.dumps(full_code), json.dumps(led_scans),
+                        r.get("local_status"), "SYNC_RECONCILE_PULL_READY", r.get("server_scan_id"), r.get("server_status"),
+                        r.get("final_status"), r.get("ng_reason"), r.get("scan_at"),
+                    ),
+                )
+
+                cur.execute("DELETE FROM local_scan_led_items WHERE local_scan_id = %s", (local_scan_id,))
+                for item in led_scans:
+                    cur.execute(
+                        """
+                        INSERT INTO local_scan_led_items (
+                            scan_id, local_scan_id, led_slot, led_index, led_scan_raw,
+                            led_lot_no, vendor_char, led_suffix, local_status, ng_reason
+                        )
+                        SELECT id, local_scan_id, %s, %s, %s, %s, %s, %s, %s, %s
+                        FROM local_scan_records WHERE local_scan_id = %s
+                        """,
+                        (
+                            item.get("slot"), item.get("index"), item.get("raw"),
+                            item.get("lot_no"), item.get("vendor_char"), item.get("suffix"),
+                            item.get("status"), item.get("ng_reason"), local_scan_id,
+                        ),
+                    )
+                count += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return count
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ from PyQt5 import uic
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QDialog
 
-from db.local_db import add_local_notification, get_app_settings, update_app_settings
+from db.local_db import add_local_notification, get_app_settings, get_scan_counts, update_app_settings
 from machine.identity import ensure_machine_identity
 from app_paths import get_bundle_dir
 
@@ -14,6 +14,11 @@ UI_PATH = os.path.join(get_bundle_dir(), "ui", "register_window.ui")
 MAX_LOG_LINES = 500
 
 STATUS_POLL_INTERVAL_MS = 12000
+
+# Riêng biệt với STATUS_POLL_INTERVAL_MS (chỉ chạy khi PENDING_LICENSE/
+# PENDING_APPROVAL) — pending sync cần cập nhật bất kể trạng thái đăng ký gì,
+# máy đã APPROVED/READY vẫn cần theo dõi số liệu này.
+PENDING_SYNC_REFRESH_INTERVAL_MS = 5000
 
 # Trạng thái hiển thị suy ra từ registration_status + license_activated_at —
 # KHÔNG lưu trực tiếp khoá PENDING_LICENSE/PENDING_APPROVAL vào DB, cột
@@ -48,7 +53,7 @@ class RegisterWindow(QDialog):
     APPROVED. Dùng chung server_worker (ServerWorker) với MainWindow — mỗi
     job_kind tự lọc theo tên, không đụng job "health" của MainWindow."""
 
-    def __init__(self, server_worker, parent=None):
+    def __init__(self, server_worker, on_sync_now=None, on_check_data=None, parent=None):
         super().__init__(parent)
         uic.loadUi(UI_PATH, self)
 
@@ -56,13 +61,32 @@ class RegisterWindow(QDialog):
         self.server_worker.callSucceeded.connect(self._on_call_succeeded)
         self.server_worker.callFailed.connect(self._on_call_failed)
 
+        # Callback do MainWindow truyền vào (thường là
+        # lambda: self._maybe_start_sync_batch("MANUAL") /
+        # lambda: self._start_reconcile_check(manual=True)) — dialog này
+        # không tự giữ state _batch_in_flight/_reconcile_in_flight/_serial/
+        # _uid nên không tự chạy được logic sync/reconcile, chỉ chuyển tiếp
+        # yêu cầu về nơi có đủ state (MainWindow).
+        self._on_sync_now = on_sync_now
+        self._on_check_data = on_check_data
+
         self.pushButtonSendRequest.clicked.connect(self.on_send_request_clicked)
         self.pushButtonRefreshStatus.clicked.connect(self.on_refresh_clicked)
+        self.pushButtonSyncNow.clicked.connect(self.on_sync_now_clicked)
+        self.pushButtonCheckData.clicked.connect(self.on_check_data_clicked)
         self.pushButtonClose.clicked.connect(self.close)
 
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(STATUS_POLL_INTERVAL_MS)
         self._poll_timer.timeout.connect(self._poll_status)
+
+        # Chạy liên tục suốt vòng đời dialog, KHÔNG điều kiện theo trạng thái
+        # đăng ký như _poll_timer — máy đã APPROVED/READY (trường hợp phổ
+        # biến nhất khi mở dialog này để bấm Sync Now) vẫn cần thấy số liệu.
+        self._sync_label_timer = QTimer(self)
+        self._sync_label_timer.setInterval(PENDING_SYNC_REFRESH_INTERVAL_MS)
+        self._sync_label_timer.timeout.connect(self._refresh_pending_sync_label)
+        self._sync_label_timer.start()
 
         self._serial = None
         self._uid = None
@@ -75,6 +99,7 @@ class RegisterWindow(QDialog):
         view_state = self._refresh_view()
         if view_state in ("PENDING_LICENSE", "PENDING_APPROVAL"):
             self._poll_status()
+        self._refresh_pending_sync_label()
 
     ######################################################################
     # Định danh máy (serial/uid/ip) — hiển thị read-only
@@ -182,6 +207,24 @@ class RegisterWindow(QDialog):
         self.server_worker.enqueue(
             "register_status", request_id=str(request_id), serial=self._serial, uid=self._uid,
         )
+
+    ######################################################################
+    # Data Sync (POST /api/sync/batches/submit + sync/reconcile/* — logic
+    # thật ở MainWindow, dialog này chỉ hiển thị số liệu + chuyển tiếp yêu
+    # cầu qua on_sync_now/on_check_data)
+    ######################################################################
+
+    def on_sync_now_clicked(self):
+        if self._on_sync_now is not None:
+            self._on_sync_now()
+
+    def on_check_data_clicked(self):
+        if self._on_check_data is not None:
+            self._on_check_data()
+
+    def _refresh_pending_sync_label(self):
+        count = get_scan_counts().get("pending_sync", 0)
+        self.labelPendingSync.setText(f"Pending sync: {count}")
 
     ######################################################################
     # Xử lý response từ ServerWorker (job_kind: register_request/register_status)

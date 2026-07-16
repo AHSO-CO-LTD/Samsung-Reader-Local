@@ -128,7 +128,7 @@ RUNTIME_BANNER_STYLES = {
     "_default": "background-color: #9e9e9e; color: white;",
 }
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 
 # Mốc dùng lại từ reconcile_pull's take mặc định (server/api_client.py) — doc
 # không cho số cụ thể riêng cho sync/batches/submit.

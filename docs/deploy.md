@@ -7,11 +7,12 @@ Hướng dẫn cài đặt cho người lắp đặt máy tại chỗ (máy prod
 1. Tải bản release mới nhất từ GitHub (file `.zip`) → giải nén ra 1 thư mục bất kỳ trên máy (ví dụ `C:\LocalReaderMonitor`).
 2. Trong thư mục vừa giải nén, chuột phải `setup.ps1` → **Run with PowerShell** (hoặc mở PowerShell tại thư mục đó, chạy `.\setup.ps1`).
    - Script tự kiểm tra và cài PostgreSQL nếu máy chưa có, tạo role/database/schema, và sinh `local_db_config.json` cạnh `LocalReaderMonitor.exe`.
+   - Cài PostgreSQL tự động thử theo thứ tự: (1) tải trực tiếp bằng `Invoke-WebRequest` (tự dùng proxy hệ thống nếu mạng nhà máy có cấu hình proxy — đường tải chính, đáng tin cậy hơn winget trên mạng công ty), (2) fallback qua `winget` nếu tải trực tiếp thất bại, (3) nếu cả 2 đều thất bại thì dừng lại và in hướng dẫn cài PostgreSQL thủ công (kèm mật khẩu cần đặt) — cài xong thì chạy lại `setup.ps1`.
    - Script chạy lại được nhiều lần một cách an toàn (không tạo trùng, không ghi đè cấu hình đã có) — nếu có lỗi giữa chừng, chạy lại `setup.ps1` là đủ.
-   - Nếu máy chưa có PowerShell/winget hỗ trợ cài tự động, script sẽ dừng lại và in hướng dẫn cài PostgreSQL thủ công (kèm mật khẩu cần đặt) — cài xong thì chạy lại `setup.ps1`.
+   - Cửa sổ PowerShell **luôn dừng lại chờ nhấn Enter** trước khi đóng (dù thành công hay lỗi) — không còn tự tắt ngay khiến không kịp đọc thông báo.
 3. Mở `LocalReaderMonitor.exe`.
 4. Bấm **Change Server IP** — nhập đúng địa chỉ IP:port của server thật tại nhà máy (không phải địa chỉ mặc định lúc dev).
-5. Bấm **Configure** — thêm 3 đầu đọc thật (LED BAR 1, LED BAR 2, QRCODE BOTTOM) với đúng IP/port thật của từng đầu đọc (không phải cấu hình mock/test).
+5. Bấm **Configure** — thêm các đầu đọc thật (vai trò LED BAR/QRCODE BOTTOM) với đúng IP/port thật của từng đầu đọc (không phải cấu hình mock/test). Nếu xưởng có dùng thêm máy quét mã vạch cầm tay loại Keyboard-HID (giả lập gõ phím), checkbox "Bật máy quét mã vạch cầm tay (HID)" trong cùng cửa sổ này mặc định đã bật sẵn — không cần cấu hình IP/port gì thêm, chỉ cần cắm máy quét vào máy tính và focus vào MainWindow.
 6. Bấm **Register** — gửi yêu cầu đăng ký máy, chờ admin phía server duyệt (xem trạng thái ngay trong dialog).
 7. Sau khi được duyệt (trạng thái chuyển READY), quét thử 1 sản phẩm thật để xác nhận toàn bộ chuỗi hoạt động (đọc mã → so khớp OK/NG → gửi server).
 8. Nếu gặp lỗi ở bất kỳ bước nào, gửi kèm file `app_error.log` (nằm cạnh `LocalReaderMonitor.exe`, chỉ xuất hiện khi có lỗi chưa xử lý được) cho kỹ sư phụ trách.
@@ -22,6 +23,7 @@ Hướng dẫn cài đặt cho người lắp đặt máy tại chỗ (máy prod
 - **App mở được nhưng không kết nối server**: kiểm tra lại IP:port đã nhập ở "Change Server IP", và máy có thật sự nối được vào mạng LAN nhà máy không.
 - **Đầu đọc hiện "Mất kết nối"**: kiểm tra IP/port đầu đọc trong "Configure", và cáp mạng/nguồn của đầu đọc vật lý.
 - **App tự đóng không rõ lý do**: xem `app_error.log` cạnh `.exe` — file này ghi lại traceback đầy đủ của lỗi gần nhất.
+- **Tra cứu lịch sử hoạt động (không phải lỗi crash)**: thư mục `log/` cạnh `.exe` chứa file log theo ngày (`app_events.log`, tự xoay vòng, giữ 30 ngày) — ghi lại toàn bộ sự kiện/thông báo hệ thống (kết nối reader, đồng bộ server, kết quả quét...), tách biệt hoàn toàn với `app_error.log`.
 
 ---
 
@@ -31,8 +33,8 @@ Mật khẩu PostgreSQL dùng **cố định, giống nhau trên mọi máy** (q
 
 | Tài khoản | Mật khẩu | Dùng khi nào |
 | --- | --- | --- |
-| `postgres` (superuser) | `LRM_PgSuper_2026_Change_If_Needed!` | Thao tác quản trị Postgres trực tiếp (pgAdmin/psql), hoặc khi cài PostgreSQL thủ công trên máy chưa hỗ trợ cài tự động |
-| `samsung_qr_local_user` (role app) | `LRM_AppRole_2026_Change_If_Needed!` | Giá trị nằm trong `local_db_config.json` — nếu file này bị mất/sửa nhầm, xoá đi và chạy lại `setup.ps1` sẽ tự sinh lại đúng file với mật khẩu này |
+| `postgres` (superuser) | `0123456789` | Thao tác quản trị Postgres trực tiếp (pgAdmin/psql), hoặc khi cài PostgreSQL thủ công trên máy chưa hỗ trợ cài tự động |
+| `samsung_qr_local_user` (role app) | `0123456789` | Giá trị nằm trong `local_db_config.json` — nếu file này bị mất/sửa nhầm, xoá đi và chạy lại `setup.ps1` sẽ tự sinh lại đúng file với mật khẩu này |
 
 Nếu cần đổi 2 giá trị này (ví dụ theo yêu cầu bảo mật riêng của nhà máy): sửa tham số mặc định `$PgSuperPassword`/`$AppRolePassword` ở đầu `setup.ps1`, cập nhật lại đúng giá trị mới vào bảng trên, và áp dụng nhất quán cho MỌI máy sẽ cài từ bản release đó trở đi (đổi giá trị nhưng không cập nhật lại doc này sẽ khiến không ai tra được mật khẩu đúng khi cần).
 

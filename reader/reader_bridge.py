@@ -23,7 +23,17 @@ class _SocketWorker(QThread):
 
     def stop(self):
         self.conn.stop()
-        self.wait(2000)
+        # KHÔNG đặt timeout — self.conn.stop() giờ đánh thức ngay reconnect
+        # sleep qua threading.Event (xem SRXConnection._stop_event), nên
+        # thread thoát nhanh trong mọi trường hợp trừ lúc đang kẹt giữa
+        # chừng socket.create_connection() (tối đa 5s, không có cách ngắt
+        # giữa chừng 1 syscall blocking từ thread khác). Chờ có timeout rồi
+        # bỏ qua (như trước) để nơi gọi tưởng đã dừng trong khi thread vẫn
+        # còn sống → xoá/deleteLater() reader lúc đó là "QThread: Destroyed
+        # while thread is still running", crash cứng — đã tự verify bằng
+        # test thật. Đợi vô hạn ở đây đảm bảo isRunning()=False chắc chắn
+        # trước khi nơi gọi (ReaderManager.remove_reader) được phép xoá.
+        self.wait()
 
     def send(self, cmd):
         return self.conn.send(cmd)

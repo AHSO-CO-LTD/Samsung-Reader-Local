@@ -52,16 +52,22 @@ QSplitter::handle {
     <widget class="QGroupBox" name="groupBoxAddReader">
      <property name="title"><string>Add Reader</string></property>
      <layout class="QFormLayout" name="formLayoutAddReader">
-      <item row="0" column="0"><widget class="QLabel" name="labelName"><property name="text"><string>Name</string></property></widget></item>
+      <item row="0" column="0"><widget class="QLabel" name="labelRole"><property name="text"><string>Role</string></property></widget></item>
       <item row="0" column="1">
-       <widget class="QComboBox" name="comboBoxName">
+       <widget class="QComboBox" name="comboBoxRole">
         <property name="minimumHeight"><number>30</number></property>
        </widget>
       </item>
-      <item row="1" column="0"><widget class="QLabel" name="labelIp"><property name="text"><string>IP Address</string></property></widget></item>
-      <item row="1" column="1"><widget class="QLineEdit" name="lineEditIp"><property name="placeholderText"><string>192.168.3.100</string></property></widget></item>
-      <item row="2" column="0"><widget class="QLabel" name="labelDataPort"><property name="text"><string>Data Port</string></property></widget></item>
-      <item row="2" column="1">
+      <item row="1" column="0"><widget class="QLabel" name="labelName"><property name="text"><string>Name</string></property></widget></item>
+      <item row="1" column="1">
+       <widget class="QLineEdit" name="lineEditNameSuffix">
+        <property name="placeholderText"><string>vd: 1, 2, A...</string></property>
+       </widget>
+      </item>
+      <item row="2" column="0"><widget class="QLabel" name="labelIp"><property name="text"><string>IP Address</string></property></widget></item>
+      <item row="2" column="1"><widget class="QLineEdit" name="lineEditIp"><property name="placeholderText"><string>192.168.3.100</string></property></widget></item>
+      <item row="3" column="0"><widget class="QLabel" name="labelDataPort"><property name="text"><string>Data Port</string></property></widget></item>
+      <item row="3" column="1">
        <widget class="QSpinBox" name="spinBoxDataPort">
         <property name="minimumHeight"><number>30</number></property>
         <property name="minimum"><number>1</number></property>
@@ -69,13 +75,13 @@ QSplitter::handle {
         <property name="value"><number>9004</number></property>
        </widget>
       </item>
-      <item row="3" column="0"><widget class="QLabel" name="labelCommandPort"><property name="text"><string>Command Port</string></property></widget></item>
-      <item row="3" column="1">
+      <item row="4" column="0"><widget class="QLabel" name="labelCommandPort"><property name="text"><string>Command Port</string></property></widget></item>
+      <item row="4" column="1">
        <widget class="QLineEdit" name="lineEditCommandPort">
         <property name="placeholderText"><string>Optional - leave empty if not used</string></property>
        </widget>
       </item>
-      <item row="4" column="0" colspan="2">
+      <item row="5" column="0" colspan="2">
        <widget class="QPushButton" name="pushButtonAddReader">
         <property name="minimumHeight"><number>34</number></property>
         <property name="text"><string>Add</string></property>
@@ -96,6 +102,7 @@ QSplitter::handle {
          <property name="selectionMode"><enum>QAbstractItemView::SingleSelection</enum></property>
          <property name="editTriggers"><set>QAbstractItemView::NoEditTriggers</set></property>
          <column><property name="text"><string>Name</string></property></column>
+         <column><property name="text"><string>Role</string></property></column>
          <column><property name="text"><string>IP Address</string></property></column>
          <column><property name="text"><string>Data Port</string></property></column>
          <column><property name="text"><string>Command Port</string></property></column>
@@ -134,6 +141,12 @@ QSplitter::handle {
    </item>
    <item>
     <layout class="QHBoxLayout" name="horizontalLayoutBottom">
+     <item>
+      <widget class="QCheckBox" name="checkBoxHidScanner">
+       <property name="text"><string>Bật máy quét mã vạch cầm tay (HID)</string></property>
+       <property name="checked"><bool>true</bool></property>
+      </widget>
+     </item>
      <item>
       <spacer name="horizontalSpacerBottom">
        <property name="orientation"><enum>Qt::Horizontal</enum></property>

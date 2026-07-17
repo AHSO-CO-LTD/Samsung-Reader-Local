@@ -187,6 +187,18 @@ QComboBox:disabled {
     border-color: #728C88;
 }
 
+QLabel#labelLedBar2RefCode:disabled {
+    background-color: #8A9C97;
+    color: #5C6E69;
+    border-color: #728C88;
+}
+
+QListWidget:disabled {
+    background-color: #24413F;
+    color: #7B8F8B;
+    border-color: #4C6663;
+}
+
 QSpinBox::up-button,
 QSpinBox::down-button,
 QComboBox::drop-down {
@@ -614,7 +626,7 @@ QToolTip {
                    <string>Quantity: </string>
                   </property>
                   <property name="minimum">
-                   <number>1</number>
+                   <number>0</number>
                   </property>
                   <property name="maximum">
                    <number>99</number>
@@ -875,22 +887,6 @@ QToolTip {
                </widget>
               </item>
               <item>
-               <widget class="QLabel" name="labelPendingSync">
-                <property name="minimumSize">
-                 <size>
-                  <width>0</width>
-                  <height>24</height>
-                 </size>
-                </property>
-                <property name="text">
-                 <string>Đang chờ đồng bộ: 0</string>
-                </property>
-                <property name="alignment">
-                 <set>Qt::AlignCenter</set>
-                </property>
-               </widget>
-              </item>
-              <item>
                <widget class="QPushButton" name="pushButtonChangeServerIp">
                 <property name="minimumSize">
                  <size>
@@ -1016,7 +1012,7 @@ QToolTip {
           </widget>
          </item>
          <item>
-          <widget class="QGroupBox" name="groupBoxLog">
+          <widget class="QLabel" name="labelNotificationBanner">
            <property name="minimumSize">
             <size>
              <width>0</width>
@@ -1031,26 +1027,20 @@ QToolTip {
            </property>
            <property name="font">
             <font>
-             <pointsize>11</pointsize>
+             <pointsize>14</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
             </font>
            </property>
-           <property name="title">
-            <string>Log</string>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
            </property>
-           <layout class="QVBoxLayout" name="verticalLayoutLog">
-            <item>
-             <widget class="QTextEdit" name="textEditLog">
-              <property name="font">
-               <font>
-                <pointsize>10</pointsize>
-               </font>
-              </property>
-              <property name="readOnly">
-               <bool>true</bool>
-              </property>
-             </widget>
-            </item>
-           </layout>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+           <property name="text">
+            <string>Chưa có thông báo.</string>
+           </property>
           </widget>
          </item>
          <item>
@@ -1060,9 +1050,12 @@ QToolTip {
              <property name="orientation">
               <enum>Qt::Horizontal</enum>
              </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Fixed</enum>
+             </property>
              <property name="sizeHint" stdset="0">
               <size>
-               <width>40</width>
+               <width>20</width>
                <height>20</height>
               </size>
              </property>
@@ -1070,11 +1063,11 @@ QToolTip {
            </item>
            <item>
             <widget class="QPushButton" name="pushButtonReset">
-             <property name="maximumSize">
-              <size>
-               <width>220</width>
-               <height>16777215</height>
-              </size>
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
              <property name="font">
               <font>
@@ -1093,9 +1086,12 @@ QToolTip {
              <property name="orientation">
               <enum>Qt::Horizontal</enum>
              </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Fixed</enum>
+             </property>
              <property name="sizeHint" stdset="0">
               <size>
-               <width>40</width>
+               <width>20</width>
                <height>20</height>
               </size>
              </property>

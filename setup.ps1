@@ -44,8 +44,8 @@
 param(
     [string]$AppRoleName = "samsung_qr_local_user",
     [string]$AppDbName = "samsung_qr_local",
-    [string]$PgSuperPassword = "LRM_PgSuper_2026_Change_If_Needed!",
-    [string]$AppRolePassword = "LRM_AppRole_2026_Change_If_Needed!",
+    [string]$PgSuperPassword = "0123456789",
+    [string]$AppRolePassword = "0123456789",
     [int]$PgPort = 5432
 )
 
@@ -112,6 +112,14 @@ function Invoke-Psql {
     }
 }
 
+# Bọc toàn bộ phần thân trong try/catch/finally — LÝ DO: trước đây mọi lỗi
+# (kể cả throw từ Invoke-Psql/exit 1 cũ) khiến cửa sổ PowerShell đóng NGAY
+# LẬP TỨC khi chạy qua "Run with PowerShell" (double-click mở 1 powershell.exe
+# riêng, tự đóng cửa sổ khi script kết thúc dù thành công hay lỗi) — operator
+# không kịp đọc thông báo lỗi dù script ĐÃ in ra, tưởng nhầm là "crash không
+# rõ lý do". finally { Read-Host } đảm bảo cửa sổ luôn dừng lại chờ Enter.
+try {
+
 ######################################################################
 # 1. PostgreSQL đã cài chưa?
 ######################################################################
@@ -122,39 +130,66 @@ $psqlPath = Find-PsqlExe
 $pgFreshlyInstalled = $false
 
 if (-not $psqlPath) {
-    Write-Host "PostgreSQL not found. Attempting silent install via winget..."
+    Write-Host "PostgreSQL not found. Attempting automatic install..."
 
-    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if (-not $winget) {
-        Write-Host ""
-        Write-Host "winget is not available on this machine." -ForegroundColor Red
-        Write-Host "Please install PostgreSQL manually:" -ForegroundColor Yellow
-        Write-Host "  1. Download from: https://www.postgresql.org/download/windows/"
-        Write-Host "  2. During install, set the superuser (postgres) password to:"
-        Write-Host "     $PgSuperPassword"
-        Write-Host "  3. Re-run this script after installation completes."
-        exit 1
+    $installerArgs = @("--mode", "unattended", "--unattendedmodeui", "minimal", "--superpassword", $PgSuperPassword, "--serverport", $PgPort)
+    $installedThisRun = $false
+
+    # --- Cách 1: tải trực tiếp bằng Invoke-WebRequest rồi tự chạy installer ---
+    # Đây là cách ƯU TIÊN, KHÔNG phải winget — vì winget có lịch sử hay KHÔNG
+    # nhận đúng proxy công ty (WinRT/COM networking stack riêng, không dùng
+    # chung cấu hình proxy hệ thống/WinINET) — máy khách vẫn ra được Internet
+    # bình thường qua proxy, nhưng winget lại fail dù domain KHÔNG hề bị chặn.
+    # Invoke-WebRequest mặc định tự dùng proxy hệ thống (WinINET) nên nhiều
+    # khả năng tải được ở đúng chỗ winget đã fail — không cần domain khác.
+    Write-Host "Đang tải PostgreSQL installer (qua HTTP trực tiếp, tự dùng proxy hệ thống nếu có)..."
+    $installerUrl = "https://get.enterprisedb.com/postgresql/postgresql-17.7-1-windows-x64.exe"
+    $installerPath = Join-Path $env:TEMP "postgresql-installer-lrm.exe"
+    $downloadOk = $false
+    try {
+        $ProgressPreference = "SilentlyContinue"  # tắt progress bar UI của Invoke-WebRequest — chậm đáng kể khi tải file lớn qua remoting/non-interactive host
+        Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing -TimeoutSec 180
+        $downloadOk = Test-Path $installerPath
+        if ($downloadOk) { Write-Host "Tải thành công." -ForegroundColor Green }
+    } catch {
+        Write-Host "Tải trực tiếp thất bại: $($_.Exception.Message)" -ForegroundColor Yellow
+    } finally {
+        $ProgressPreference = "Continue"
     }
 
-    # Chưa verify thật trên máy sạch chưa có gì (chỉ verify được logic
-    # role/db/schema bên dưới trên Postgres dev đang chạy sẵn) — xem
-    # docs/pending_live_test.md.
-    & winget install --id PostgreSQL.PostgreSQL --silent `
-        --accept-package-agreements --accept-source-agreements `
-        --override "--mode unattended --unattendedmodeui minimal --superpassword $PgSuperPassword --serverport $PgPort"
+    if ($downloadOk) {
+        Write-Host "Đang cài đặt (không cần mạng ở bước này)..."
+        & $installerPath @installerArgs
+        Remove-Item $installerPath -ErrorAction SilentlyContinue
+        $psqlPath = Find-PsqlExe
+        if ($psqlPath) { $installedThisRun = $true }
+    }
 
-    $psqlPath = Find-PsqlExe
+    # --- Cách 2: fallback winget (giữ lại — máy nào không cần proxy, hoặc
+    # network khác hẳn, winget vẫn có thể là đường tắt hoạt động tốt) ---
+    if (-not $psqlPath) {
+        $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+        if ($winget) {
+            Write-Host "Thử cài qua winget (dự phòng)..."
+            & winget install --id PostgreSQL.PostgreSQL --silent `
+                --accept-package-agreements --accept-source-agreements `
+                --override "--mode unattended --unattendedmodeui minimal --superpassword $PgSuperPassword --serverport $PgPort"
+            $psqlPath = Find-PsqlExe
+            if ($psqlPath) { $installedThisRun = $true }
+        }
+    }
+
     if (-not $psqlPath) {
         Write-Host ""
-        Write-Host "Automatic install did not complete successfully." -ForegroundColor Red
+        Write-Host "Automatic install did not complete successfully (đã thử cả tải trực tiếp lẫn winget)." -ForegroundColor Red
         Write-Host "Please install PostgreSQL manually:" -ForegroundColor Yellow
         Write-Host "  1. Download from: https://www.postgresql.org/download/windows/"
         Write-Host "  2. During install, set the superuser (postgres) password to:"
         Write-Host "     $PgSuperPassword"
         Write-Host "  3. Re-run this script after installation completes."
-        exit 1
+        throw "Automatic PostgreSQL install failed — see instructions above."
     }
-    $pgFreshlyInstalled = $true
+    $pgFreshlyInstalled = $installedThisRun
     Write-Host "PostgreSQL installed successfully."
 } else {
     Write-Host "Found existing PostgreSQL: $psqlPath"
@@ -180,7 +215,7 @@ try {
         Write-Host "  - Either reset the 'postgres' role password to match `$PgSuperPassword` used here, or"
         Write-Host "  - Re-run this script with -PgSuperPassword matching the existing installation."
     }
-    exit 1
+    throw "Cannot authenticate as postgres superuser — see instructions above."
 }
 
 ######################################################################
@@ -267,3 +302,15 @@ if (Test-Path $ConfigPath) {
 
 Write-Host ""
 Write-Host "Setup complete — you can now open LocalReaderMonitor.exe." -ForegroundColor Green
+$exitCode = 0
+
+} catch {
+    Write-Host ""
+    Write-Host "SETUP THAT BAI: $($_.Exception.Message)" -ForegroundColor Red
+    $exitCode = 1
+} finally {
+    Write-Host ""
+    Read-Host "Nhan Enter de dong cua so nay"
+}
+
+exit $exitCode

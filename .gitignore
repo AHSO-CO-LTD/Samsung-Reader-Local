@@ -13,6 +13,7 @@ __pycache__/
 local_db_config.json
 server_config.json
 readers_config.json
+hid_scanner_config.json
 
 # Legacy .NET SDK approach
 legacy_dotnet_sdk_approach/
@@ -23,6 +24,7 @@ dist/
 build/
 app_error.log
 app.lock
+log/
 
 # Editor / OS
 .vscode/

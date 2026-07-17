@@ -1,27 +1,59 @@
 import os
+import time
 from datetime import datetime
 
 from PyQt5 import uic
-from PyQt5.QtCore import Qt, QTimer, QUrl
+from PyQt5.QtCore import QEvent, Qt, QTimer, QUrl
 from PyQt5.QtGui import QColor
 from PyQt5.QtMultimedia import QMediaContent, QMediaPlayer, QMediaPlaylist
 from PyQt5.QtWidgets import (
-    QDialog, QInputDialog, QLabel, QListWidgetItem, QMainWindow, QMessageBox, QTableWidgetItem,
+    QApplication,
+    QDialog,
+    QInputDialog,
+    QLabel,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QTableWidgetItem,
 )
 
+from app_logger import log_event
 from data.duplicate_key import compute_duplicate_key
 from data.mapping_store import load_mappings
 from db.local_db import (
-    add_local_notification, apply_machine_config, apply_reconcile_pull, apply_scan_submit_result,
-    apply_sync_batch_result, build_reconcile_payload, claim_pending_scans_for_batch,
-    claim_specific_scans_for_batch, create_sync_batch, finish_command, get_app_settings,
-    get_command_local_status, get_scan_counts, get_server_settings, mark_scan_submit_failed,
-    mark_sync_batch_failed, new_batch_code, record_full_scan, recover_stuck_syncing_scans,
-    save_command_received, update_app_settings,
+    add_local_notification,
+    apply_machine_config,
+    apply_reconcile_pull,
+    apply_scan_submit_result,
+    apply_sync_batch_result,
+    build_reconcile_payload,
+    claim_pending_scans_for_batch,
+    claim_specific_scans_for_batch,
+    create_sync_batch,
+    finish_command,
+    get_app_settings,
+    get_command_local_status,
+    get_latest_unread_notification,
+    get_scan_counts,
+    get_server_settings,
+    mark_notification_read,
+    mark_scan_submit_failed,
+    mark_sync_batch_failed,
+    new_batch_code,
+    record_full_scan,
+    recover_stuck_syncing_scans,
+    save_command_received,
+    update_app_settings,
 )
 from machine.identity import ensure_machine_identity
 from reader.reader_bridge import ReaderManager
-from reader.reader_store import load_readers
+from reader.reader_store import (
+    ROLE_LED_BAR,
+    ROLE_QR_BOTTOM,
+    infer_role_from_name,
+    load_hid_scanner_enabled,
+    load_readers,
+)
 from server.api_client import SamsungQrServerClient, ServerApiConfig
 from server.server_config import load_server_config, save_server_config
 from server.server_worker import ServerWorker
@@ -69,8 +101,6 @@ STATUS_COLORS = {
     "disconnected": QColor("red"),
 }
 
-MAX_LOG_LINES = 500
-
 SERVER_HEALTH_CHECK_INTERVAL_MS = 15000
 
 SERVER_STATUS_LABELS = {
@@ -94,7 +124,12 @@ COMMANDS_POLL_INTERVAL_MS = 30000
 # 4 command_type hợp lệ (đúng ENUM machine_command_type trong db/schema.sql) —
 # command_type nào khác đều bị coi là không hỗ trợ, ack FAILED ngay, không
 # ghi vào command_inbox (cột đó là ENUM, insert giá trị lạ sẽ lỗi).
-KNOWN_COMMAND_TYPES = {"SYNC_PROFILE", "SYNC_SCAN_DATA", "RELOAD_CONFIG", "SHOW_MESSAGE"}
+KNOWN_COMMAND_TYPES = {
+    "SYNC_PROFILE",
+    "SYNC_SCAN_DATA",
+    "RELOAD_CONFIG",
+    "SHOW_MESSAGE",
+}
 
 # local_runtime_status coi là "được phép scan" — mọi giá trị khác đều chặn
 # màn scan chính (xem _apply_runtime_status). SERVER_OFFLINE PHẢI nằm trong
@@ -128,7 +163,23 @@ RUNTIME_BANNER_STYLES = {
     "_default": "background-color: #9e9e9e; color: white;",
 }
 
-APP_VERSION = "0.3.0"
+# Gộp lại vì bị lặp 5 chỗ literal tiếng Anh trước khi dịch.
+MESSAGE_MACHINE_READY = "Máy đã sẵn sàng."
+
+NOTIFICATION_POLL_INTERVAL_MS = 1500
+
+# Nền GIỮ NGUYÊN màu đen giống textEditLog cũ (#071413) — chỉ đổi màu CHỮ
+# theo severity, không đổi nền (yêu cầu rõ của user).
+NOTIFICATION_BANNER_BASE_STYLE = "background-color: #071413; border: 1px solid #52736E; border-radius: 3px; padding: 8px;"
+NOTIFICATION_SEVERITY_TEXT_COLORS = {
+    "INFO": "#5FD68A",
+    "WARNING": "#FFC107",
+    "ERROR": "#FF6B5B",
+    "CRITICAL": "#FF3B30",
+    "_default": "#D8E9E4",  # màu chữ mặc định giống log cũ
+}
+
+APP_VERSION = "0.4.0"
 
 # Mốc dùng lại từ reconcile_pull's take mặc định (server/api_client.py) — doc
 # không cho số cụ thể riêng cho sync/batches/submit.
@@ -150,11 +201,30 @@ RESULT_STYLE = {
 
 RESULT_BLINK_OFF_STYLE = "background-color: #071413; color: white;"
 RESULT_BLINK_INTERVAL_MS = 300
-RESULT_SOUND_REPEAT_COUNT = 2
-RESULT_SOUND_PATHS = {
-    "ok": os.path.join(SOUND_DIR, "OK.mp3"),
-    "ng": os.path.join(SOUND_DIR, "NG.mp3"),
-}
+RESULT_SOUND_REPEAT_COUNT = 1
+RESULT_SOUND_BASENAMES = {"ok": "OK", "ng": "NG"}
+# .wav ưu tiên hơn .mp3 nếu cả 2 cùng tồn tại.
+
+
+def _resolve_result_sound_paths():
+    """Dò 1 LẦN DUY NHẤT lúc import — file âm thanh là asset tĩnh đóng gói
+    sẵn, không đổi lúc app đang chạy, nên không cần os.path.isfile() lại mỗi
+    lần phát (khác dữ liệu profile/config cần đọc lại theo thời gian thực)."""
+    resolved = {}
+    for result, basename in RESULT_SOUND_BASENAMES.items():
+        for ext in (".wav", ".mp3"):
+            path = os.path.join(SOUND_DIR, basename + ext)
+            if os.path.isfile(path):
+                resolved[result] = path
+                break
+        else:
+            # Không có file nào — giữ đường dẫn .mp3 mặc định để log lỗi
+            # "Không tìm thấy file" hiện đúng tên file đang mong đợi.
+            resolved[result] = os.path.join(SOUND_DIR, basename + ".mp3")
+    return resolved
+
+
+RESULT_SOUND_PATHS = _resolve_result_sound_paths()
 
 # Cảnh báo khi mã quét bị bỏ qua vì cột đã đủ số lượng — thường gặp nhất khi
 # operator quét sản phẩm mới nhưng quên bấm Reset sau 1 kết quả NG (NG không
@@ -162,17 +232,10 @@ RESULT_SOUND_PATHS = {
 # mọi mã mới bị lặng lẽ bỏ qua (trước đây chỉ ghi log, dễ bị bỏ lỡ trên xưởng).
 SCAN_IGNORED_WARNING_STYLE = "background-color: #ffc107; color: black;"
 
-# Tên reader cố định (chọn qua combobox ở Config Window) ứng với từng cột kết quả.
-READER_COLUMN_MAP = {
-    "LED BAR 1": "ledbar1",
-    "LED BAR 2": "ledbar2",
-    "QRCODE BOTTOM": "qrbottom",
-}
-
 # Mã reader trả về là 1 chuỗi liền không có khoảng trắng, nên word-wrap thường
 # (ngắt theo từ) không tự xuống dòng được — chủ động chèn "\n" theo số ký tự
 # cố định để đảm bảo luôn xuống dòng đúng chỗ, không phụ thuộc Qt word-wrap.
-RESULT_WRAP_CHUNK = 22   # vừa đủ 1 hàng cho mã 22 ký tự (LED BAR 1/2)
+RESULT_WRAP_CHUNK = 22  # vừa đủ 1 hàng cho mã 22 ký tự (LED BAR 1/2)
 
 # Nền từng khung mã trong 3 cột kết quả: True=đúng (xanh), False=sai (đỏ),
 # None=chưa có logic kiểm tra (QRCODE BOTTOM hiện tại) — trung tính.
@@ -201,6 +264,7 @@ def _apply_item_result_color(item, color):
     item.setBackground(color)
     item.setForeground(RESULT_ITEM_TEXT_COLOR)
 
+
 # Mã NG cố định (khớp vocabulary docs/10-huong-dan-api-may-local-python.md) để
 # lưu vào local_ng_reason/ng_reason — log hiển thị cho operator luôn dùng câu
 # tiếng Việt tương ứng qua _describe_ng(), không bao giờ lộ mã ra log.
@@ -212,12 +276,32 @@ NG_FULL_VENDOR_NOT_MATCH = "FULL_VENDOR_NOT_MATCH"
 NG_QR_BOTTOM_LED_NOT_MATCH = "QR_BOTTOM_LED_NOT_MATCH"
 NG_FULL_FACTORY_NOT_MATCH = "FULL_FACTORY_NOT_MATCH"
 NG_LOCAL_DUPLICATE = "LOCAL_DUPLICATE"
+# Reader Keyence SR-X gửi đúng chuỗi "ERROR" (Read Error String mặc định,
+# xem docs/srx_manual_dump.txt dòng ~3981-3984) khi không đọc được mã — coi
+# đây là 1 lần đọc lỗi rõ ràng, KHÔNG chạy qua logic đối chiếu (độ dài/suffix/
+# vendor...) vì "ERROR" chắc chắn không khớp bất kỳ điều kiện nào, chỉ tạo ra
+# thông báo gây nhiễu (vd "Sai độ dài mã LED: 5 ký tự...").
+NG_SCAN_FAILED = "SCAN_FAILED"
+READER_SCAN_ERROR_TEXT = "ERROR"
+
+# Máy quét mã vạch cầm tay (Keyboard-HID, giả lập gõ phím + Enter) — nguồn
+# nhập liệu thứ 2 song song với reader TCP. Không có "reader nào gửi lên" cố
+# định như socket TCP nên phải tự suy role từ NỘI DUNG mỗi lần quét — xem
+# _detect_hid_scan_role()/eventFilter().
+HID_SCANNER_NAME = "HID Scanner"
+QR_BOTTOM_PREFIX = "VN39"
+HID_SCAN_MAX_GAP_SEC = (
+    0.25  # khoảng cách tối đa giữa 2 phím liên tiếp để còn tính là "gõ từ máy quét"
+)
+HID_SCAN_MIN_LENGTH = (
+    4  # độ dài tối thiểu để tính là 1 lần quét hợp lệ (tránh bắt nhầm Enter đơn lẻ)
+)
 
 
 def _wrap_for_display(text, chunk_size):
     if len(text) <= chunk_size:
         return text
-    return "\n".join(text[i:i + chunk_size] for i in range(0, len(text), chunk_size))
+    return "\n".join(text[i : i + chunk_size] for i in range(0, len(text), chunk_size))
 
 
 class MainWindow(QMainWindow):
@@ -234,6 +318,17 @@ class MainWindow(QMainWindow):
         self.manager = ReaderManager()
         self._status = {}
         self._wired_readers = set()
+        self._reader_roles = {}
+        # Máy quét HID cầm tay — không tra self._reader_roles (dict đó bị
+        # _sync_reader_panel() nạp lại hoàn toàn từ readers_config.json mỗi
+        # lần đóng Config Window, sẽ xoá mất entry gán tay cho tên này).
+        # self._hid_scan_role là biến TẠM, set ngay trước mỗi lời gọi
+        # on_data_received(HID_SCANNER_NAME, ...) trong _handle_hid_scan().
+        self._hid_scan_role = None
+        self._hid_scan_buffer = ""
+        self._hid_last_keypress_time = None
+        self._hid_scanner_enabled = load_hid_scanner_enabled()
+        self._ledbar2_locked = False
         self._received_counts = {"ledbar1": 0, "ledbar2": 0, "qrbottom": 0}
         self._last_input = {}
         self._mappings_by_chassis = {}
@@ -246,6 +341,11 @@ class MainWindow(QMainWindow):
         # tiếp) — khi progress bar đầy, toàn bộ item thu thập được hợp thành 1
         # dòng local_scan_records + nhiều dòng local_scan_led_items.
         self._session_led_items = {"ledbar1": [], "ledbar2": []}
+        # Đếm thứ tự nhận thực tế trong phiên — dùng để xác định mã NG nào
+        # "đến trước" khi cả ledbar1 lẫn ledbar2 đều có mã lỗi (xem
+        # _finalize_scan_session): nối 2 list riêng rồi lấy phần tử đầu tiên
+        # không đủ, vì mất thứ tự thời gian thật giữa 2 cột.
+        self._session_led_seq = 0
         self._session_qr = None
         # True sau khi 1 phiên OK vừa chốt — chưa xoá màn hình ngay (để operator
         # kịp nhìn kết quả), chỉ xoá khi có mã MỚI của phiên tiếp theo tới.
@@ -330,17 +430,26 @@ class MainWindow(QMainWindow):
         self.pushButtonRegister.clicked.connect(self.on_register_clicked)
         self.pushButtonChangeServerIp.clicked.connect(self.on_change_server_ip_clicked)
         self.pushButtonReset.clicked.connect(self.on_reset_clicked)
-        self.comboBoxChassisRear.currentTextChanged.connect(self.on_chassis_rear_changed)
+        self.comboBoxChassisRear.currentTextChanged.connect(
+            self.on_chassis_rear_changed
+        )
 
         for widgets in self._column_widgets.values():
             widgets["spin"].valueChanged.connect(self._update_progress)
 
         self._init_result_alerts()
+        self._init_notification_banner()
         self.set_result_status(None)
         self._load_mappings()
         self._load_persisted_readers()
         self._update_progress()
         self._init_server_worker()
+
+        # Cài SAU CÙNG — bắt phím toàn cục cho máy quét HID cầm tay (xem
+        # eventFilter()). Cài ở tầng QApplication (không phải keyPressEvent
+        # của riêng MainWindow) để nhận sự kiện SỚM NHẤT, trước khi 1 nút
+        # bấm đang có focus kịp "nuốt" phím Enter kết thúc chuỗi quét.
+        QApplication.instance().installEventFilter(self)
 
     ######################################################################
     # Kết nối server (REST) — bước 1: chỉ GET /api/health
@@ -401,7 +510,9 @@ class MainWindow(QMainWindow):
         if self._serial and self._uid:
             self._check_identity_status()
         else:
-            self._append_log(f"[{self._now()}] [Định danh máy] Không đọc được serial/UID phần cứng.")
+            self._append_log(
+                f"[{self._now()}] [Định danh máy] Không đọc được serial/UID phần cứng."
+            )
             self._apply_runtime_status("ERROR", RUNTIME_BANNER_TEXT["ERROR"])
 
     def _check_server_health(self):
@@ -409,16 +520,24 @@ class MainWindow(QMainWindow):
 
     def _check_identity_status(self):
         if self._serial and self._uid:
-            self.server_worker.enqueue("identity_status", serial=self._serial, uid=self._uid)
+            self.server_worker.enqueue(
+                "identity_status", serial=self._serial, uid=self._uid
+            )
 
     def _check_commands(self):
-        self.server_worker.enqueue("commands_poll", serial=self._serial, uid=self._uid, take=20)
+        self.server_worker.enqueue(
+            "commands_poll", serial=self._serial, uid=self._uid, take=20
+        )
 
     def _ack_command(self, server_command_id, status, error_message=None):
         self.server_worker.enqueue(
-            "command_ack", correlation_id=str(server_command_id),
-            command_id=server_command_id, serial=self._serial, uid=self._uid,
-            status=status, error_message=error_message,
+            "command_ack",
+            correlation_id=str(server_command_id),
+            command_id=server_command_id,
+            serial=self._serial,
+            uid=self._uid,
+            status=status,
+            error_message=error_message,
         )
 
     def _send_heartbeat(self):
@@ -426,17 +545,24 @@ class MainWindow(QMainWindow):
         counts = get_scan_counts()
         self.server_worker.enqueue(
             "heartbeat",
-            machine_code=settings.get("machine_code"), serial=self._serial, uid=self._uid,
-            ip_address=None, app_version=APP_VERSION,
+            machine_code=settings.get("machine_code"),
+            serial=self._serial,
+            uid=self._uid,
+            ip_address=None,
+            app_version=APP_VERSION,
             local_db_version=settings.get("local_db_version"),
-            local_total_record=counts["total"], local_ok_record=counts["ok"],
-            local_ng_record=counts["ng"], local_pending_sync=counts["pending_sync"],
+            local_total_record=counts["total"],
+            local_ok_record=counts["ok"],
+            local_ng_record=counts["ng"],
+            local_pending_sync=counts["pending_sync"],
             local_checksum=None,
         )
 
     def _on_server_call_succeeded(self, job_kind, correlation_id, data):
         if job_kind == "health":
-            update_app_settings(server_online=True, last_health_at=datetime.now().astimezone())
+            update_app_settings(
+                server_online=True, last_health_at=datetime.now().astimezone()
+            )
             self._apply_server_online(True)
         elif job_kind == "identity_status":
             self._handle_identity_status_result(data)
@@ -464,49 +590,72 @@ class MainWindow(QMainWindow):
         elif job_kind == "identity_status":
             if payload.get("code") == "MACHINE_IDENTITY_MISMATCH":
                 matches = (payload.get("data") or {}).get("matches") or []
-                detail = "; ".join(
-                    f"{m.get('machine_code')}({m.get('serial')}/{m.get('uid')})" for m in matches
-                ) or "(không có chi tiết)"
+                detail = (
+                    "; ".join(
+                        f"{m.get('machine_code')}({m.get('serial')}/{m.get('uid')})"
+                        for m in matches
+                    )
+                    or "(không có chi tiết)"
+                )
                 message = f"Sai định danh — trùng với: {detail}"
                 update_app_settings(
-                    local_runtime_status="BLOCKED", local_status_message=message,
+                    local_runtime_status="BLOCKED",
+                    local_status_message=message,
                     local_status_updated_at=datetime.now().astimezone(),
                 )
                 self._append_log(f"[{self._now()}] [Định danh máy] {message}")
                 self._apply_runtime_status("BLOCKED", message)
             else:
-                self._append_log(f"[{self._now()}] [Định danh máy] Lỗi mạng khi kiểm tra định danh: {error_message}")
+                self._append_log(
+                    f"[{self._now()}] [Định danh máy] Lỗi mạng khi kiểm tra định danh: {error_message}"
+                )
         elif job_kind == "config":
             code = payload.get("code")
             if code in ("MACHINE_NOT_FOUND", "MACHINE_IDENTITY_MISMATCH"):
-                message = f"Config load failed: {code}"
+                message = f"Tải cấu hình thất bại: {code}"
                 update_app_settings(
-                    local_runtime_status="BLOCKED", local_status_message=message,
+                    local_runtime_status="BLOCKED",
+                    local_status_message=message,
                     local_status_updated_at=datetime.now().astimezone(),
                 )
                 self._append_log(f"[{self._now()}] [Config] {message}")
                 self._apply_runtime_status("BLOCKED", message)
                 if correlation_id:
-                    self._complete_config_triggered_command(correlation_id, False, message)
+                    self._complete_config_triggered_command(
+                        correlation_id, False, message
+                    )
             else:
-                self._append_log(f"[{self._now()}] [Config] Lỗi mạng khi tải cấu hình: {error_message}")
+                self._append_log(
+                    f"[{self._now()}] [Config] Lỗi mạng khi tải cấu hình: {error_message}"
+                )
                 if correlation_id:
-                    self._complete_config_triggered_command(correlation_id, False, f"Network error: {error_message}")
+                    self._complete_config_triggered_command(
+                        correlation_id, False, f"Network error: {error_message}"
+                    )
         elif job_kind == "commands_poll":
-            self._append_log(f"[{self._now()}] [Command] Lỗi mạng khi poll command: {error_message}")
+            self._append_log(
+                f"[{self._now()}] [Command] Lỗi mạng khi poll command: {error_message}"
+            )
         elif job_kind == "command_ack":
             if payload.get("code") == "MACHINE_COMMAND_NOT_FOUND" and correlation_id:
-                finish_command(int(correlation_id), "FAILED", "FAILED", "MACHINE_COMMAND_NOT_FOUND")
-                self._append_log(f"[{self._now()}] [Command] Command không thuộc máy này (id={correlation_id}) — đánh dấu xong cục bộ.")
+                finish_command(
+                    int(correlation_id), "FAILED", "FAILED", "MACHINE_COMMAND_NOT_FOUND"
+                )
+                self._append_log(
+                    f"[{self._now()}] [Command] Command không thuộc máy này (id={correlation_id}) — đánh dấu xong cục bộ."
+                )
             else:
-                self._append_log(f"[{self._now()}] [Command] Lỗi mạng khi ack command (id={correlation_id}): {error_message}")
+                self._append_log(
+                    f"[{self._now()}] [Command] Lỗi mạng khi ack command (id={correlation_id}): {error_message}"
+                )
         elif job_kind == "heartbeat":
             code = payload.get("code")
             now = datetime.now().astimezone()
             if code in ("MACHINE_NOT_FOUND", "MACHINE_IDENTITY_MISMATCH"):
-                message = f"Heartbeat failed: {code}"
+                message = f"Heartbeat thất bại: {code}"
                 update_app_settings(
-                    local_runtime_status="BLOCKED", local_status_message=message,
+                    local_runtime_status="BLOCKED",
+                    local_status_message=message,
                     local_status_updated_at=now,
                 )
                 self._append_log(f"[{self._now()}] [Heartbeat] {message}")
@@ -515,24 +664,34 @@ class MainWindow(QMainWindow):
                 # Timeout/mất kết nối — theo doc mục 4.1.11: "Set server offline,
                 # tiếp tục lưu local. Không xóa machine_code." KHÔNG khoá màn
                 # scan (SERVER_OFFLINE nằm trong SCAN_ENABLED_STATUSES).
-                message = "Server unreachable — scans are saved locally and will sync later."
-                update_app_settings(local_runtime_status="SERVER_OFFLINE", local_status_updated_at=now)
-                self._append_log(f"[{self._now()}] [Heartbeat] Server không phản hồi: {error_message}")
+                message = "Không kết nối được server — dữ liệu quét được lưu cục bộ và sẽ đồng bộ sau."
+                update_app_settings(
+                    local_runtime_status="SERVER_OFFLINE", local_status_updated_at=now
+                )
+                self._append_log(
+                    f"[{self._now()}] [Heartbeat] Server không phản hồi: {error_message}"
+                )
                 self._apply_runtime_status("SERVER_OFFLINE", message)
         elif job_kind == "scan_submit":
             local_scan_id = correlation_id
             code = payload.get("code")
             if code == "PROFILE_NOT_FOUND":
-                mark_scan_submit_failed(local_scan_id, code, payload.get("message"), blocked=True)
+                mark_scan_submit_failed(
+                    local_scan_id, code, payload.get("message"), blocked=True
+                )
                 message = f"Profile không còn hợp lệ trên server (id={local_scan_id}) — đang tải lại config."
-                add_local_notification("PROFILE_NOT_FOUND", "ERROR", "Profile không hợp lệ", message)
-                self._append_log(f"[{self._now()}] [Scan] {message}")
+                add_local_notification(
+                    "PROFILE_NOT_FOUND", "ERROR", "Profile không hợp lệ", message
+                )
                 self._check_machine_config()
             elif code in ("MACHINE_NOT_FOUND", "MACHINE_IDENTITY_MISMATCH"):
-                mark_scan_submit_failed(local_scan_id, code, payload.get("message"), blocked=True)
-                message = f"Scan submit failed: {code}"
+                mark_scan_submit_failed(
+                    local_scan_id, code, payload.get("message"), blocked=True
+                )
+                message = f"Gửi kết quả scan thất bại: {code}"
                 update_app_settings(
-                    local_runtime_status="BLOCKED", local_status_message=message,
+                    local_runtime_status="BLOCKED",
+                    local_status_message=message,
                     local_status_updated_at=datetime.now().astimezone(),
                 )
                 self._append_log(f"[{self._now()}] [Scan] {message}")
@@ -540,17 +699,28 @@ class MainWindow(QMainWindow):
             elif code:
                 # Họ mã FULL_CODE_INVALID/DUPLICATE_KEY_INVALID/... — server bác
                 # cấu trúc payload, hiếm gặp, nghĩa là parser local sai lệch.
-                mark_scan_submit_failed(local_scan_id, code, payload.get("message"), blocked=True)
+                mark_scan_submit_failed(
+                    local_scan_id, code, payload.get("message"), blocked=True
+                )
                 message = f"Server từ chối payload (id={local_scan_id}): {code} — {payload.get('message')}"
-                add_local_notification("LOCAL_SCAN_PAYLOAD_INVALID", "ERROR", "Server từ chối dữ liệu scan", message)
+                add_local_notification(
+                    "LOCAL_SCAN_PAYLOAD_INVALID",
+                    "ERROR",
+                    "Server từ chối dữ liệu quét",
+                    f"Dữ liệu gửi lên không hợp lệ (mã lỗi: {code}).",
+                )
                 self._append_log(f"[{self._now()}] [Scan] {message}")
             else:
                 # Lỗi mạng thuần — giữ FAILED_RETRYABLE, retry thật là việc của
                 # bước sync/batches/submit sau. Không notification riêng —
                 # LOCAL_SERVER_OFFLINE từ health/heartbeat đã lo, tránh spam
                 # theo từng scan.
-                mark_scan_submit_failed(local_scan_id, "NETWORK_ERROR", error_message, blocked=False)
-                self._append_log(f"[{self._now()}] [Scan] Lỗi mạng khi gửi scan (id={local_scan_id}): {error_message}")
+                mark_scan_submit_failed(
+                    local_scan_id, "NETWORK_ERROR", error_message, blocked=False
+                )
+                self._append_log(
+                    f"[{self._now()}] [Scan] Lỗi mạng khi gửi scan (id={local_scan_id}): {error_message}"
+                )
         elif job_kind == "batch_submit":
             # Cùng lý do defensive-dual-path như scan_submit ở trên —
             # BATCH_SUBMIT_PARTIAL_FAILED có success:false trong sample doc,
@@ -567,11 +737,17 @@ class MainWindow(QMainWindow):
             # batch_submit. Không notification riêng cho lỗi mạng thuần —
             # health/heartbeat đã lo, tránh spam.
             self._reconcile_in_flight = False
-            self._append_log(f"[{self._now()}] [Đối soát] Lỗi khi kiểm tra dữ liệu: {error_message}")
+            self._append_log(
+                f"[{self._now()}] [Đối soát] Lỗi khi kiểm tra dữ liệu: {error_message}"
+            )
         elif job_kind == "reconcile_pull":
-            message = f"Pull from Server thất bại: {error_message}"
-            add_local_notification("LOCAL_DB_SYNC_FAILED", "CRITICAL", "Đồng bộ từ server thất bại", message)
-            self._append_log(f"[{self._now()}] [Đối soát] {message}")
+            message = f"Kéo dữ liệu từ server thất bại: {error_message}"
+            add_local_notification(
+                "LOCAL_DB_SYNC_FAILED",
+                "CRITICAL",
+                "Đồng bộ từ server thất bại",
+                message,
+            )
 
     def _handle_identity_status_result(self, response):
         code = response.get("code")
@@ -580,23 +756,32 @@ class MainWindow(QMainWindow):
 
         if code == "MACHINE_IDENTITY_APPROVED":
             machine_code = data.get("machine_code")
-            message = f"Approved — machine_code={machine_code}."
+            message = f"Đã được duyệt — machine_code={machine_code}."
             update_app_settings(
-                registration_status="APPROVED", machine_code=machine_code,
-                local_runtime_status="READY", local_status_message=message,
+                registration_status="APPROVED",
+                machine_code=machine_code,
+                local_runtime_status="READY",
+                local_status_message=message,
                 local_status_updated_at=now,
             )
             self._apply_runtime_status("READY", message)
             self._check_machine_config()
         elif code == "MACHINE_REGISTER_PENDING":
-            waiting = "WAITING_APPROVAL" if data.get("license_activated_at") else "WAITING_LICENSE"
+            waiting = (
+                "WAITING_APPROVAL"
+                if data.get("license_activated_at")
+                else "WAITING_LICENSE"
+            )
             message = (
-                "License activated, waiting for approval." if waiting == "WAITING_APPROVAL"
-                else "Waiting for license."
+                "License đã kích hoạt, đang chờ duyệt."
+                if waiting == "WAITING_APPROVAL"
+                else "Đang chờ cấp license."
             )
             fields = {
-                "registration_status": "PENDING", "local_runtime_status": waiting,
-                "local_status_message": message, "local_status_updated_at": now,
+                "registration_status": "PENDING",
+                "local_runtime_status": waiting,
+                "local_status_message": message,
+                "local_status_updated_at": now,
             }
             if data.get("request_id"):
                 fields["registration_request_id"] = data.get("request_id")
@@ -605,26 +790,34 @@ class MainWindow(QMainWindow):
             update_app_settings(**fields)
             self._apply_runtime_status(waiting, message)
         elif code == "MACHINE_IDENTITY_NOT_REGISTERED":
-            message = "Machine is not registered on the server yet."
+            message = "Máy chưa được đăng ký trên server."
             update_app_settings(
-                registration_status="NOT_REQUESTED", registration_request_id=None,
-                local_runtime_status="NOT_REGISTERED", local_status_message=message,
+                registration_status="NOT_REQUESTED",
+                registration_request_id=None,
+                local_runtime_status="NOT_REGISTERED",
+                local_status_message=message,
                 local_status_updated_at=now,
             )
             self._apply_runtime_status("NOT_REGISTERED", message)
         elif code == "MACHINE_IDENTITY_DISABLED":
-            message = "Machine has been disabled on the server. Contact admin."
+            message = "Máy đã bị vô hiệu hoá trên server. Liên hệ admin."
             update_app_settings(
-                local_runtime_status="BLOCKED", local_status_message=message,
+                local_runtime_status="BLOCKED",
+                local_status_message=message,
                 local_status_updated_at=now,
             )
             self._apply_runtime_status("BLOCKED", message)
         else:
-            self._append_log(f"[{self._now()}] [Định danh máy] Phản hồi không xác định: {code} — {response.get('message')}")
+            self._append_log(
+                f"[{self._now()}] [Định danh máy] Phản hồi không xác định: {code} — {response.get('message')}"
+            )
 
     def _check_machine_config(self, correlation_id=""):
         self.server_worker.enqueue(
-            "config", correlation_id=correlation_id, serial=self._serial, uid=self._uid,
+            "config",
+            correlation_id=correlation_id,
+            serial=self._serial,
+            uid=self._uid,
         )
 
     def _handle_config_result(self, response, correlation_id=""):
@@ -633,9 +826,13 @@ class MainWindow(QMainWindow):
         now = datetime.now().astimezone()
 
         if code != "MACHINE_CONFIG_LOADED":
-            self._append_log(f"[{self._now()}] [Config] Phản hồi không xác định: {code} — {response.get('message')}")
+            self._append_log(
+                f"[{self._now()}] [Config] Phản hồi không xác định: {code} — {response.get('message')}"
+            )
             if correlation_id:
-                self._complete_config_triggered_command(correlation_id, False, f"Unexpected response: {code}")
+                self._complete_config_triggered_command(
+                    correlation_id, False, f"Unexpected response: {code}"
+                )
             return
 
         apply_machine_config(data, self._serial, self._uid)
@@ -645,25 +842,29 @@ class MainWindow(QMainWindow):
         profiles = data.get("profiles") or []
         vendors = data.get("vendors") or []
         if not profiles:
-            message = "No active profile assigned to this machine on the server."
+            message = "Chưa có profile nào được gán cho máy này trên server."
             update_app_settings(
-                local_runtime_status="BLOCKED", local_status_message=message,
+                local_runtime_status="BLOCKED",
+                local_status_message=message,
                 local_status_updated_at=now,
             )
-            add_local_notification("LOCAL_PROFILE_EMPTY", "CRITICAL", "Thiếu profile", message)
-            self._append_log(f"[{self._now()}] [Config] {message}")
+            add_local_notification(
+                "LOCAL_PROFILE_EMPTY", "CRITICAL", "Thiếu profile", message
+            )
             self._apply_runtime_status("BLOCKED", message)
             if correlation_id:
                 self._complete_config_triggered_command(correlation_id, False, message)
         else:
-            self._append_log(f"[{self._now()}] [Config] Đồng bộ thành công: {len(profiles)} profile, {len(vendors)} vendor.")
             add_local_notification(
-                "LOCAL_CONFIG_SYNCED", "INFO", "Đã đồng bộ cấu hình",
+                "LOCAL_CONFIG_SYNCED",
+                "INFO",
+                "Đã đồng bộ cấu hình",
                 f"{len(profiles)} profile, {len(vendors)} vendor.",
             )
-            message = "Machine is READY."
+            message = MESSAGE_MACHINE_READY
             update_app_settings(
-                local_runtime_status="READY", local_status_message=message,
+                local_runtime_status="READY",
+                local_status_message=message,
                 local_status_updated_at=now,
             )
             self._apply_runtime_status("READY", message)
@@ -717,9 +918,10 @@ class MainWindow(QMainWindow):
         update_app_settings(last_heartbeat_at=now)
         if self._runtime_status == "SERVER_OFFLINE":
             self._append_log(f"[{self._now()}] [Heartbeat] Server đã kết nối lại.")
-            message = "Machine is READY."
+            message = MESSAGE_MACHINE_READY
             update_app_settings(
-                local_runtime_status="READY", local_status_message=message,
+                local_runtime_status="READY",
+                local_status_message=message,
                 local_status_updated_at=now,
             )
             self._apply_runtime_status("READY", message)
@@ -728,7 +930,9 @@ class MainWindow(QMainWindow):
         """config được gọi vì command SYNC_PROFILE/RELOAD_CONFIG
         (correlation_id = server_command_id dạng chuỗi) — ack lại command đó
         theo đúng kết quả tải config vừa xong."""
-        self._ack_command(int(correlation_id), "ACK" if ok else "FAILED", None if ok else message)
+        self._ack_command(
+            int(correlation_id), "ACK" if ok else "FAILED", None if ok else message
+        )
 
     ######################################################################
     # Command server (commands/poll + commands/:id/ack)
@@ -750,9 +954,10 @@ class MainWindow(QMainWindow):
         payload = cmd.get("payload_json") or {}
 
         if command_type not in KNOWN_COMMAND_TYPES:
-            message = f"Unsupported command_type: {command_type}"
-            self._append_log(f"[{self._now()}] [Command] {message} (id={server_command_id})")
-            add_local_notification("LOCAL_COMMAND_FAILED", "WARNING", "Lệnh không hỗ trợ", message)
+            message = f"Loại lệnh không được hỗ trợ: {command_type}"
+            add_local_notification(
+                "LOCAL_COMMAND_FAILED", "WARNING", "Lệnh không hỗ trợ", message
+            )
             self._ack_command(server_command_id, "FAILED", message)
             return
 
@@ -760,19 +965,28 @@ class MainWindow(QMainWindow):
         if existing_status in ("ACKED", "FAILED"):
             return
 
-        save_command_received(server_command_id, machine_code, command_type, payload, cmd.get("status"), cmd)
-        add_local_notification(
-            "LOCAL_COMMAND_RECEIVED", "INFO", "Nhận lệnh mới từ server",
-            f"{command_type} (id={server_command_id})",
+        save_command_received(
+            server_command_id,
+            machine_code,
+            command_type,
+            payload,
+            cmd.get("status"),
+            cmd,
         )
-        self._append_log(f"[{self._now()}] [Command] Nhận: {command_type} (id={server_command_id})")
+        add_local_notification(
+            "LOCAL_COMMAND_RECEIVED",
+            "INFO",
+            "Nhận lệnh mới từ server",
+            f"Đã nhận lệnh: {command_type}",
+        )
 
         if command_type in ("SYNC_PROFILE", "RELOAD_CONFIG"):
             self._check_machine_config(correlation_id=str(server_command_id))
         elif command_type == "SHOW_MESSAGE":
-            message = payload.get("message") or "(no message)"
-            self._append_log(f"[{self._now()}] [Server] {message}")
-            add_local_notification("LOCAL_SERVER_MESSAGE", "INFO", "Thông báo từ server", message)
+            message = payload.get("message") or "(không có nội dung)"
+            add_local_notification(
+                "LOCAL_SERVER_MESSAGE", "INFO", "Thông báo từ server", message
+            )
             self._ack_command(server_command_id, "ACK")
         elif command_type == "SYNC_SCAN_DATA":
             self._maybe_start_sync_batch("MANUAL", command_id=server_command_id)
@@ -783,10 +997,19 @@ class MainWindow(QMainWindow):
         server_command_id = data.get("id")
         if code in ("MACHINE_COMMAND_ACKED", "MACHINE_COMMAND_FAILED"):
             local_status = "ACKED" if code == "MACHINE_COMMAND_ACKED" else "FAILED"
-            finish_command(server_command_id, local_status, data.get("status"), data.get("error_message"))
-            self._append_log(f"[{self._now()}] [Command] Đã ack: id={server_command_id}, status={data.get('status')}")
+            finish_command(
+                server_command_id,
+                local_status,
+                data.get("status"),
+                data.get("error_message"),
+            )
+            self._append_log(
+                f"[{self._now()}] [Command] Đã ack: id={server_command_id}, status={data.get('status')}"
+            )
         else:
-            self._append_log(f"[{self._now()}] [Command] Ack không xác định: {code} — {response.get('message')}")
+            self._append_log(
+                f"[{self._now()}] [Command] Ack không xác định: {code} — {response.get('message')}"
+            )
 
     ######################################################################
     # Đồng bộ batch (POST /api/sync/batches/submit) — Bước 8
@@ -799,7 +1022,9 @@ class MainWindow(QMainWindow):
         _finish_sync_batch)."""
         if self._batch_in_flight:
             if command_id is not None:
-                self._ack_command(command_id, "FAILED", "A sync batch is already in progress.")
+                self._ack_command(
+                    command_id, "FAILED", "A sync batch is already in progress."
+                )
             return
 
         if get_scan_counts()["pending_sync"] == 0:
@@ -819,7 +1044,8 @@ class MainWindow(QMainWindow):
         tương thích ngược."""
         self._batch_in_flight = True
         scans_rows = (
-            claim_specific_scans_for_batch(scan_ids) if scan_ids
+            claim_specific_scans_for_batch(scan_ids)
+            if scan_ids
             else claim_pending_scans_for_batch(BATCH_SUBMIT_MAX_SIZE)
         )
         batch_code = new_batch_code(trigger_type)
@@ -848,21 +1074,33 @@ class MainWindow(QMainWindow):
         ]
 
         request_json = {
-            "batch_code": batch_code, "machine_code": machine_code,
-            "serial": self._serial, "uid": self._uid,
-            "trigger_type": trigger_type, "scans": scans_payload,
+            "batch_code": batch_code,
+            "machine_code": machine_code,
+            "serial": self._serial,
+            "uid": self._uid,
+            "trigger_type": trigger_type,
+            "scans": scans_payload,
         }
         create_sync_batch(batch_code, trigger_type, len(scans_payload), request_json)
 
         message = f"Đang đồng bộ {len(scans_payload)} bản ghi (batch={batch_code})..."
-        update_app_settings(local_runtime_status="SYNCING", local_status_message=message, local_status_updated_at=datetime.now().astimezone())
+        update_app_settings(
+            local_runtime_status="SYNCING",
+            local_status_message=message,
+            local_status_updated_at=datetime.now().astimezone(),
+        )
         self._apply_runtime_status("SYNCING", message)
         self._append_log(f"[{self._now()}] [Đồng bộ] {message}")
 
         self.server_worker.enqueue(
-            "batch_submit", correlation_id=batch_code,
-            batch_code=batch_code, machine_code=machine_code,
-            serial=self._serial, uid=self._uid, trigger_type=trigger_type, scans=scans_payload,
+            "batch_submit",
+            correlation_id=batch_code,
+            batch_code=batch_code,
+            machine_code=machine_code,
+            serial=self._serial,
+            uid=self._uid,
+            trigger_type=trigger_type,
+            scans=scans_payload,
         )
 
     def _handle_batch_submit_response(self, batch_code, response):
@@ -878,15 +1116,21 @@ class MainWindow(QMainWindow):
         result = apply_sync_batch_result(batch_code, response)
         if result["total_failed"] == 0:
             add_local_notification(
-                "OFFLINE_SYNC_DONE_OK", "INFO", "Đồng bộ hoàn tất",
-                f"batch={batch_code}: {result['total_ok']} OK, {result['total_ng']} NG.",
+                "OFFLINE_SYNC_DONE_OK",
+                "INFO",
+                "Đồng bộ hoàn tất",
+                f"Đã đồng bộ xong: {result['total_ok']} OK, {result['total_ng']} NG.",
             )
         else:
             add_local_notification(
-                "OFFLINE_SYNC_HAS_NG", "WARNING", "Đồng bộ có bản ghi lỗi",
-                f"batch={batch_code}: {result['total_failed']} bản ghi thất bại.",
+                "OFFLINE_SYNC_HAS_NG",
+                "WARNING",
+                "Đồng bộ có bản ghi lỗi",
+                f"Có {result['total_failed']} bản ghi đồng bộ thất bại.",
             )
-        if any(item.get("code") == "PROFILE_NOT_FOUND" for item in result["failed_items"]):
+        if any(
+            item.get("code") == "PROFILE_NOT_FOUND" for item in result["failed_items"]
+        ):
             self._check_machine_config()
 
         self._append_log(
@@ -894,8 +1138,12 @@ class MainWindow(QMainWindow):
             f"{result['total_ok']} OK, {result['total_ng']} NG, {result['total_failed']} thất bại."
         )
         if self._runtime_status == "SYNCING":
-            message = "Machine is READY."
-            update_app_settings(local_runtime_status="READY", local_status_message=message, local_status_updated_at=datetime.now().astimezone())
+            message = MESSAGE_MACHINE_READY
+            update_app_settings(
+                local_runtime_status="READY",
+                local_status_message=message,
+                local_status_updated_at=datetime.now().astimezone(),
+            )
             self._apply_runtime_status("READY", message)
         self._finish_sync_batch(True, None)
 
@@ -907,14 +1155,24 @@ class MainWindow(QMainWindow):
         message = response.get("message") or f"Batch submit failed: {code}"
         identity_error = code in ("MACHINE_NOT_FOUND", "MACHINE_IDENTITY_MISMATCH")
         mark_sync_batch_failed(batch_code, code, message, blocked=identity_error)
-        self._append_log(f"[{self._now()}] [Đồng bộ] Batch {batch_code} thất bại: {code} — {message}")
+        self._append_log(
+            f"[{self._now()}] [Đồng bộ] Batch {batch_code} thất bại: {code} — {message}"
+        )
 
         if identity_error:
-            update_app_settings(local_runtime_status="BLOCKED", local_status_message=message, local_status_updated_at=datetime.now().astimezone())
+            update_app_settings(
+                local_runtime_status="BLOCKED",
+                local_status_message=message,
+                local_status_updated_at=datetime.now().astimezone(),
+            )
             self._apply_runtime_status("BLOCKED", message)
         elif self._runtime_status == "SYNCING":
-            ready_message = "Machine is READY."
-            update_app_settings(local_runtime_status="READY", local_status_message=ready_message, local_status_updated_at=datetime.now().astimezone())
+            ready_message = MESSAGE_MACHINE_READY
+            update_app_settings(
+                local_runtime_status="READY",
+                local_status_message=ready_message,
+                local_status_updated_at=datetime.now().astimezone(),
+            )
             self._apply_runtime_status("READY", ready_message)
 
         self._finish_sync_batch(False, message)
@@ -923,18 +1181,30 @@ class MainWindow(QMainWindow):
         # Lỗi mạng thuần — giữ FAILED_RETRYABLE (blocked=False), trigger sau
         # tự nhặt lại. Không notification riêng, giống scan_submit đơn lẻ:
         # LOCAL_SERVER_OFFLINE từ health/heartbeat đã lo, tránh spam.
-        mark_sync_batch_failed(batch_code, "NETWORK_ERROR", error_message, blocked=False)
-        self._append_log(f"[{self._now()}] [Đồng bộ] Lỗi mạng khi gửi batch {batch_code}: {error_message}")
+        mark_sync_batch_failed(
+            batch_code, "NETWORK_ERROR", error_message, blocked=False
+        )
+        self._append_log(
+            f"[{self._now()}] [Đồng bộ] Lỗi mạng khi gửi batch {batch_code}: {error_message}"
+        )
         if self._runtime_status == "SYNCING":
-            message = "Machine is READY."
-            update_app_settings(local_runtime_status="READY", local_status_message=message, local_status_updated_at=datetime.now().astimezone())
+            message = MESSAGE_MACHINE_READY
+            update_app_settings(
+                local_runtime_status="READY",
+                local_status_message=message,
+                local_status_updated_at=datetime.now().astimezone(),
+            )
             self._apply_runtime_status("READY", message)
         self._finish_sync_batch(False, error_message)
 
     def _finish_sync_batch(self, ok, message):
         self._batch_in_flight = False
         if self._batch_command_id is not None:
-            self._ack_command(self._batch_command_id, "ACK" if ok else "FAILED", None if ok else message)
+            self._ack_command(
+                self._batch_command_id,
+                "ACK" if ok else "FAILED",
+                None if ok else message,
+            )
             self._batch_command_id = None
 
     ######################################################################
@@ -952,8 +1222,12 @@ class MainWindow(QMainWindow):
         self._reconcile_manual = manual
         payload = build_reconcile_payload()
         self.server_worker.enqueue(
-            "reconcile_check", correlation_id="reconcile",
-            serial=self._serial, uid=self._uid, ip_address=None, **payload,
+            "reconcile_check",
+            correlation_id="reconcile",
+            serial=self._serial,
+            uid=self._uid,
+            ip_address=None,
+            **payload,
         )
 
     def _handle_reconcile_check_response(self, response):
@@ -963,12 +1237,16 @@ class MainWindow(QMainWindow):
 
         if code == "SYNC_RECONCILE_CHECK_READY":
             add_local_notification(
-                "LOCAL_RECONCILE_SNAPSHOT_READY", "INFO", "Đối soát dữ liệu",
+                "LOCAL_RECONCILE_SNAPSHOT_READY",
+                "INFO",
+                "Đối soát dữ liệu",
                 "Server chưa đủ dữ liệu để so sánh — cần gửi thêm heartbeat/manifest.",
             )
         elif code == "SYNC_RECONCILE_MATCHED":
             add_local_notification(
-                "LOCAL_RECONCILE_MATCHED", "INFO", "Đối soát dữ liệu",
+                "LOCAL_RECONCILE_MATCHED",
+                "INFO",
+                "Đối soát dữ liệu",
                 "Dữ liệu local và server khớp nhau.",
             )
         elif code == "SYNC_RECONCILE_DIFF_FOUND":
@@ -977,16 +1255,23 @@ class MainWindow(QMainWindow):
             missing_local = len(diff.get("missing_on_local") or [])
             changed = len(diff.get("changed_records") or [])
             add_local_notification(
-                "LOCAL_RECONCILE_DIFF_FOUND", "WARNING", "Đối soát dữ liệu — có lệch",
+                "LOCAL_RECONCILE_DIFF_FOUND",
+                "WARNING",
+                "Đối soát dữ liệu — có lệch",
                 f"Thiếu trên server: {missing_server}, thiếu trên local: {missing_local}, lệch: {changed}.",
             )
             if self._reconcile_manual:
                 dlg = ReconcileWindow(
-                    diff, on_push=self._handle_reconcile_push, on_pull=self._handle_reconcile_pull, parent=self,
+                    diff,
+                    on_push=self._handle_reconcile_push,
+                    on_pull=self._handle_reconcile_pull,
+                    parent=self,
                 )
                 dlg.exec_()
         else:
-            self._append_log(f"[{self._now()}] [Đối soát] Phản hồi không xác định: {code} — {response.get('message')}")
+            self._append_log(
+                f"[{self._now()}] [Đối soát] Phản hồi không xác định: {code} — {response.get('message')}"
+            )
 
     def _handle_reconcile_push(self, local_scan_ids):
         """Callback từ ReconcileWindow, nút "Push to Server" (Sync theo
@@ -999,18 +1284,22 @@ class MainWindow(QMainWindow):
         Server, đã gộp cả Review theo quyết định chốt trước khi làm bước
         này)."""
         self.server_worker.enqueue(
-            "reconcile_pull", correlation_id="reconcile_pull",
-            serial=self._serial, uid=self._uid, local_scan_ids=local_scan_ids,
+            "reconcile_pull",
+            correlation_id="reconcile_pull",
+            serial=self._serial,
+            uid=self._uid,
+            local_scan_ids=local_scan_ids,
         )
 
     def _handle_reconcile_pull_response(self, response):
         records = (response.get("data") or {}).get("records") or []
         count = apply_reconcile_pull(records)
         add_local_notification(
-            "LOCAL_SYNC_FROM_SERVER_DONE", "INFO", "Đã đồng bộ từ server",
+            "LOCAL_SYNC_FROM_SERVER_DONE",
+            "INFO",
+            "Đã đồng bộ từ server",
             f"{count} bản ghi đã cập nhật theo dữ liệu server.",
         )
-        self._append_log(f"[{self._now()}] [Đối soát] Pull from Server xong: {count} bản ghi.")
         # "check lại" đúng theo doc sau khi sync xong — manual=False vì đây là
         # check XÁC NHẬN, không cần mở lại dialog.
         self._start_reconcile_check(manual=False)
@@ -1026,14 +1315,25 @@ class MainWindow(QMainWindow):
         self._scan_blocked = not scan_enabled
 
         for widget in (
-            self.comboBoxChassisRear, self.spinBoxLedBar1Count,
-            self.spinBoxLedBar2Count, self.spinBoxQrBottomCount, self.pushButtonReset,
+            self.comboBoxChassisRear,
+            self.spinBoxLedBar1Count,
+            self.spinBoxLedBar2Count,
+            self.spinBoxQrBottomCount,
+            self.pushButtonReset,
         ):
             widget.setEnabled(scan_enabled)
 
+        # Vòng lặp trên vừa mở khoá spinBoxLedBar2Count vô điều kiện — nếu
+        # profile hiện tại không có Code LED 2, phải khoá lại ngay, không thì
+        # BLOCKED -> READY sẽ mở nhầm cột 2 dù profile không cần nó.
+        if scan_enabled:
+            self._apply_ledbar2_lock(self._current_entry())
+
         self.labelRuntimeBanner.setVisible(not scan_enabled)
         if not scan_enabled:
-            self.labelRuntimeBanner.setText(message or RUNTIME_BANNER_TEXT.get(status, status))
+            self.labelRuntimeBanner.setText(
+                message or RUNTIME_BANNER_TEXT.get(status, status)
+            )
             self.labelRuntimeBanner.setStyleSheet(
                 RUNTIME_BANNER_STYLES.get(status, RUNTIME_BANNER_STYLES["_default"])
             )
@@ -1056,18 +1356,24 @@ class MainWindow(QMainWindow):
         self._append_log(f"[{self._now()}] [Định danh máy] Trạng thái: {status}.")
         if status == "BLOCKED":
             add_local_notification(
-                "LOCAL_MACHINE_BLOCKED", "CRITICAL",
-                "Máy bị khoá", message or "Máy bị khoá bởi server.",
+                "LOCAL_MACHINE_BLOCKED",
+                "CRITICAL",
+                "Máy bị khoá",
+                message or "Máy bị khoá bởi server.",
             )
         elif status in ("WAITING_LICENSE", "WAITING_APPROVAL"):
             add_local_notification(
-                "LOCAL_REGISTER_WAITING", "INFO",
-                "Đang chờ đăng ký", message or status,
+                "LOCAL_REGISTER_WAITING",
+                "INFO",
+                "Đang chờ đăng ký",
+                message or "Vui lòng chờ, quá trình đăng ký đang được xử lý.",
             )
         elif status == "READY":
             add_local_notification(
-                "LOCAL_REGISTER_APPROVED", "INFO",
-                "Máy đã được duyệt", message or "Machine approved.",
+                "LOCAL_REGISTER_APPROVED",
+                "INFO",
+                "Máy đã được duyệt",
+                message or "Máy đã sẵn sàng hoạt động.",
             )
 
     def _apply_server_online(self, is_online):
@@ -1081,13 +1387,17 @@ class MainWindow(QMainWindow):
             self._append_log(f"[{self._now()}] [Server] {state}.")
             if is_online:
                 add_local_notification(
-                    "LOCAL_SERVER_RECONNECTED", "INFO",
-                    "Server đã kết nối", "Health check thành công — server đang online.",
+                    "LOCAL_SERVER_RECONNECTED",
+                    "INFO",
+                    "Server đã kết nối",
+                    "Health check thành công — server đang online.",
                 )
             else:
                 add_local_notification(
-                    "LOCAL_SERVER_OFFLINE", "WARNING",
-                    "Mất kết nối server", "Health check thất bại — chuyển sang chế độ local-only.",
+                    "LOCAL_SERVER_OFFLINE",
+                    "WARNING",
+                    "Mất kết nối server",
+                    "Health check thất bại — chuyển sang chế độ local-only.",
                 )
 
         # Trigger NETWORK_RESTORED — bắt buộc so was_online is False (không
@@ -1111,6 +1421,11 @@ class MainWindow(QMainWindow):
     def on_configure_clicked(self):
         dlg = ConfigWindow(self.manager, parent=self)
         dlg.exec_()
+        # Đọc lại trạng thái bật/tắt HID scanner — có thể vừa đổi qua
+        # checkbox trong dialog vừa đóng. _sync_reader_panel() bên dưới tự
+        # gọi _rebuild_reader_table() (sẽ vẽ lại dòng "HID Scanner" đúng
+        # trạng thái mới).
+        self._hid_scanner_enabled = load_hid_scanner_enabled()
         self._sync_reader_panel()
 
     ######################################################################
@@ -1122,6 +1437,7 @@ class MainWindow(QMainWindow):
             self.server_worker,
             on_sync_now=lambda: self._maybe_start_sync_batch("MANUAL"),
             on_check_data=lambda: self._start_reconcile_check(manual=True),
+            on_sync_profile=lambda: self._check_machine_config(),
             parent=self,
         )
         dlg.exec_()
@@ -1134,7 +1450,10 @@ class MainWindow(QMainWindow):
     def on_change_server_ip_clicked(self):
         current = load_server_config()
         host, ok = QInputDialog.getText(
-            self, "Change Server IP", "Server IP / host:", text=current["host"],
+            self,
+            "Change Server IP",
+            "Server IP / host:",
+            text=current["host"],
         )
         if not ok:
             return
@@ -1145,8 +1464,12 @@ class MainWindow(QMainWindow):
         if host == current["host"]:
             return
         save_server_config(host, current["port"])
-        self.server_worker.update_config(ServerApiConfig(host=host, port=current["port"]))
-        self._append_log(f"[{self._now()}] [Server] Đổi địa chỉ server sang {host}:{current['port']} — đang kiểm tra kết nối...")
+        self.server_worker.update_config(
+            ServerApiConfig(host=host, port=current["port"])
+        )
+        self._append_log(
+            f"[{self._now()}] [Server] Đổi địa chỉ server sang {host}:{current['port']} — đang kiểm tra kết nối..."
+        )
         self._check_server_health()
 
     ######################################################################
@@ -1176,7 +1499,7 @@ class MainWindow(QMainWindow):
         table.setColumnWidth(2, 140)  # Code LED 2
         table.setColumnWidth(3, 150)  # Length Code LED
         table.setColumnWidth(4, 170)  # Length Code Bottom
-        table.setColumnWidth(5, 90)   # No Led
+        table.setColumnWidth(5, 90)  # No Led
 
         dlg.exec_()
 
@@ -1197,7 +1520,30 @@ class MainWindow(QMainWindow):
         self.labelLedBar1RefCode.setText(entry["led1"] or "-")
         self.labelLedBar2RefCode.setText(entry["led2"] or "-")
         self.labelQrBottomRefCode.setText(code)
+        self._apply_ledbar2_lock(entry)
         update_app_settings(active_profile_id=entry.get("profile_id"))
+
+    def _apply_ledbar2_lock(self, entry):
+        """Khoá cột LED BAR 2 (quota=0, disable spin+list+ref_label) khi
+        profile hiện tại không có Code LED 2 — cột vẫn hiện, không ẩn. Mở lại
+        (quota về 2, đúng default thiết kế trong .ui) CHỈ khi chuyển từ khoá
+        -> mở, không ghi đè quota operator đã tự chỉnh khi đổi qua lại giữa
+        các profile đều có Code LED 2 (theo dõi qua self._ledbar2_locked)."""
+        widgets = self._column_widgets["ledbar2"]
+        has_led2 = bool((entry or {}).get("led2"))
+        if not has_led2:
+            widgets["spin"].setValue(0)
+            widgets["spin"].setEnabled(False)
+            widgets["list"].setEnabled(False)
+            widgets["ref_label"].setEnabled(False)
+            self._ledbar2_locked = True
+        else:
+            if self._ledbar2_locked:
+                widgets["spin"].setValue(2)
+            widgets["spin"].setEnabled(True)
+            widgets["list"].setEnabled(True)
+            widgets["ref_label"].setEnabled(True)
+            self._ledbar2_locked = False
 
     ######################################################################
     # Nạp danh sách reader đã lưu (JSON) lúc khởi động
@@ -1207,11 +1553,17 @@ class MainWindow(QMainWindow):
         for entry in load_readers():
             try:
                 reader = self.manager.add_reader(
-                    entry["name"], entry["ip"], entry["data_port"],
-                    command_port=entry.get("command_port"), parent=self,
+                    entry["name"],
+                    entry["ip"],
+                    entry["data_port"],
+                    command_port=entry.get("command_port"),
+                    parent=self,
                 )
             except ValueError:
                 continue
+            self._reader_roles[entry["name"]] = entry.get(
+                "role"
+            ) or infer_role_from_name(entry["name"])
             self._wire_reader(reader)
             reader.start()
         self._rebuild_reader_table()
@@ -1233,6 +1585,15 @@ class MainWindow(QMainWindow):
         current_names = set(self.manager.names())
         current_readers = {self.manager.get(name) for name in current_names}
         self._wired_readers &= current_readers  # bỏ object đã bị remove khỏi manager
+
+        # Role có thể đã đổi qua Config Window (thêm/xoá reader) — nạp lại từ
+        # file (đã được ConfigWindow._persist() ghi mới nhất trước khi dialog
+        # đóng modal), lọc theo reader còn tồn tại.
+        self._reader_roles = {
+            e["name"]: e.get("role") or infer_role_from_name(e["name"])
+            for e in load_readers()
+            if e["name"] in current_names
+        }
 
         for stale_name in set(self._status) - current_names:
             self._status.pop(stale_name, None)
@@ -1261,10 +1622,103 @@ class MainWindow(QMainWindow):
             table.insertRow(row)
             table.setItem(row, 0, QTableWidgetItem(name))
             status_item = QTableWidgetItem(self._status_label(name))
-            status_item.setForeground(STATUS_COLORS.get(self._status.get(name, {}).get("data"), QColor("black")))
+            status_item.setForeground(
+                STATUS_COLORS.get(
+                    self._status.get(name, {}).get("data"), QColor("black")
+                )
+            )
             table.setItem(row, 1, status_item)
             self._set_input_cell(row, self._last_input.get(name, ""))
             table.resizeRowToContents(row)
+
+        # Máy quét HID cầm tay — không phải reader TCP thật (ReaderManager
+        # không biết gì về nó), thêm 1 dòng cố định riêng để operator luôn
+        # thấy trạng thái/mã vừa quét, nhất quán với các reader thật.
+        row = table.rowCount()
+        table.insertRow(row)
+        table.setItem(row, 0, QTableWidgetItem(HID_SCANNER_NAME))
+        status_item = QTableWidgetItem(
+            "Đã bật" if self._hid_scanner_enabled else "Đã tắt"
+        )
+        status_item.setForeground(
+            QColor("green" if self._hid_scanner_enabled else "red")
+        )
+        table.setItem(row, 1, status_item)
+        self._set_input_cell(row, self._last_input.get(HID_SCANNER_NAME, ""))
+        table.resizeRowToContents(row)
+
+    ######################################################################
+    # Máy quét mã vạch cầm tay (Keyboard-HID) — nguồn nhập liệu thứ 2
+    ######################################################################
+
+    def eventFilter(self, obj, event):
+        """Bắt phím toàn cục để phát hiện chuỗi gõ từ máy quét HID (giả lập
+        gõ phím + Enter). Phân biệt với người gõ phím thật bằng TỐC ĐỘ: máy
+        quét gõ rất nhanh, người gõ tay chậm hơn nhiều — dùng time.monotonic()
+        (đồng hồ đơn điệu, không bị ảnh hưởng chỉnh giờ hệ thống) đo khoảng
+        cách giữa các lần nhấn phím liên tiếp. Chỉ hoạt động khi MainWindow
+        là cửa sổ đang active (ConfigWindow/RegisterWindow mở modal sẽ tự
+        làm QApplication.activeWindow() khác self, không cần điều kiện riêng).
+
+        QUAN TRỌNG — đã tự verify bằng bug thật: nếu widget đang focus (vd 1
+        QPushButton) không tiêu thụ 1 phím, Qt PHÁT LẠI CÙNG 1 event object
+        lên từng widget cha (propagate), gọi lại eventFilter() 1 lần nữa cho
+        MỖI cấp cha — khiến buffer bị nhân bản từng ký tự (vd "ZB36..." thành
+        "ZZZZZBBBBB33333..."). Từng thử dedupe bằng id(event) cho CẢ ký tự
+        thường LẪN Enter nhưng KHÔNG an toàn: CPython tái sử dụng đúng địa
+        chỉ bộ nhớ cho các QKeyEvent ngắn hạn (đã tự verify bằng test thật
+        theo 2 hướng riêng — ký tự bị mất do đè lẫn nhau trong 1 chuỗi, VÀ
+        Enter của lượt quét SAU bị nhận nhầm trùng Enter của lượt TRƯỚC do
+        object cũ vừa huỷ được cấp lại đúng địa chỉ). Giải pháp đúng — LUÔN
+        NUỐT (return True) mọi phím (ký tự thường lẫn Enter) ngay khi tính
+        năng đang bật, không cần dò trùng gì cả — chặn đứng Qt phát lại từ
+        gốc. An toàn vì MainWindow không có ô nhập text tự do/nút mặc định
+        cần phím Enter nào (đã xác nhận qua code)."""
+        if (
+            event.type() == QEvent.KeyPress
+            and self._hid_scanner_enabled
+            and QApplication.activeWindow() is self
+        ):
+            now = time.monotonic()
+            gap = (
+                None
+                if self._hid_last_keypress_time is None
+                else now - self._hid_last_keypress_time
+            )
+            self._hid_last_keypress_time = now
+
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                buffer, self._hid_scan_buffer = self._hid_scan_buffer, ""
+                if (
+                    gap is not None
+                    and gap <= HID_SCAN_MAX_GAP_SEC
+                    and len(buffer) >= HID_SCAN_MIN_LENGTH
+                ):
+                    self._handle_hid_scan(buffer)
+                return True
+
+            text = event.text()
+            if text.isprintable():
+                if gap is None or gap > HID_SCAN_MAX_GAP_SEC:
+                    self._hid_scan_buffer = text  # bắt đầu chuỗi mới
+                else:
+                    self._hid_scan_buffer += text
+                return True
+            return False
+        return super().eventFilter(obj, event)
+
+    def _detect_hid_scan_role(self, text):
+        """Máy quét HID không có 'reader nào gửi lên' cố định như TCP — tự
+        suy role từ NỘI DUNG mỗi lần quét: QRCODE BOTTOM luôn có tiền tố
+        VN39; MỌI mã khác đều coi là LED BAR (kể cả không khớp độ dài/suffix
+        nào — để _classify_led_bar tự đánh dấu NG qua
+        _pick_fallback_led_column(), VẪN hiển thị lên màn hình, không âm
+        thầm bỏ qua khiến operator tưởng nhầm máy quét không hoạt động)."""
+        return ROLE_QR_BOTTOM if text.startswith(QR_BOTTOM_PREFIX) else ROLE_LED_BAR
+
+    def _handle_hid_scan(self, text):
+        self._hid_scan_role = self._detect_hid_scan_role(text)
+        self.on_data_received(HID_SCANNER_NAME, text)
 
     ######################################################################
     # Nhận dữ liệu / trạng thái từ reader (chạy trên GUI thread nhờ signal)
@@ -1277,21 +1731,42 @@ class MainWindow(QMainWindow):
         if self._session_pending_clear:
             self._clear_session()
             self._session_pending_clear = False
-            self._append_log(f"[{self._now()}] Sản phẩm mới — tự động xoá kết quả phiên trước.")
+            self._append_log(
+                f"[{self._now()}] Sản phẩm mới — tự động xoá kết quả phiên trước."
+            )
 
         self._update_reader_input(name, text)
 
         is_ok = None
         code = None
         entry = self._current_entry()
-        if name in ("LED BAR 1", "LED BAR 2"):
-            column_key, is_ok, code = self._classify_led_bar(name, text)
-            if is_ok:
-                self._last_ok_led_text[column_key] = text
+        # HID Scanner không tra self._reader_roles — role đã được
+        # _handle_hid_scan() tự suy từ nội dung ngay trước lời gọi này.
+        role = (
+            self._hid_scan_role
+            if name == HID_SCANNER_NAME
+            else self._reader_roles.get(name)
+        )
+        if role == ROLE_LED_BAR:
+            if text == READER_SCAN_ERROR_TEXT:
+                # Reader báo lỗi đọc rõ ràng — không chạy qua so khớp độ dài/
+                # suffix (chắc chắn NG, dễ ra thông báo gây nhiễu như "Sai độ
+                # dài mã LED: 5 ký tự...").
+                column_key = self._pick_fallback_led_column()
+                is_ok, code = False, NG_SCAN_FAILED
+                self._append_log(f"[{self._now()}] [{name}] Không quét được mã (ERROR)")
             else:
-                self._append_log(f"[{self._now()}] [{name}] NG ({self._describe_ng(code, text, entry)}): {text}")
+                column_key, is_ok, code = self._classify_led_bar(text)
+                if is_ok:
+                    self._last_ok_led_text[column_key] = text
+                else:
+                    self._append_log(
+                        f"[{self._now()}] [{name}] NG ({self._describe_ng(code, text, entry)}): {text}"
+                    )
+        elif role == ROLE_QR_BOTTOM:
+            column_key = "qrbottom"
         else:
-            column_key = READER_COLUMN_MAP.get(name)
+            column_key = None
         if column_key is None:
             return
 
@@ -1302,7 +1777,9 @@ class MainWindow(QMainWindow):
         quota = widgets["spin"].value()
 
         if self._received_counts[column_key] >= quota:
-            self._append_log(f"[{self._now()}] [{name}] Đã đủ số lượng ({quota}), bỏ qua mã dư: {text}")
+            self._append_log(
+                f"[{self._now()}] [{name}] Đã đủ số lượng ({quota}), bỏ qua mã dư: {text}"
+            )
             self._ignored_scan_count += 1
             self._show_scan_ignored_warning()
             return
@@ -1313,11 +1790,15 @@ class MainWindow(QMainWindow):
         # màu) chạy đúng 1 lần lúc finalize — xem _finalize_scan_session().
         item = QListWidgetItem(_wrap_for_display(text, RESULT_WRAP_CHUNK))
         item.setTextAlignment(Qt.AlignCenter)
-        _apply_item_result_color(item, RESULT_ITEM_COLORS.get(is_ok, RESULT_ITEM_COLORS[None]))
+        _apply_item_result_color(
+            item, RESULT_ITEM_COLORS.get(is_ok, RESULT_ITEM_COLORS[None])
+        )
         widgets["list"].addItem(item)
         self._received_counts[column_key] += 1
         if self._received_counts[column_key] >= quota:
-            self._append_log(f"[{self._now()}] [{name}] Đã đủ số lượng ({quota}/{quota})")
+            self._append_log(
+                f"[{self._now()}] [{name}] Đã đủ số lượng ({quota}/{quota})"
+            )
 
         if column_key == "qrbottom":
             # Chưa kiểm tra ở đây — chỉ hiển thị trung tính ngay khi nhận
@@ -1327,7 +1808,15 @@ class MainWindow(QMainWindow):
             # reader nào về trước).
             self._session_qr = {"text": text, "item": item}
         else:
-            self._session_led_items[column_key].append({"text": text, "is_ok": is_ok, "code": code})
+            self._session_led_seq += 1
+            self._session_led_items[column_key].append(
+                {
+                    "text": text,
+                    "is_ok": is_ok,
+                    "code": code,
+                    "seq": self._session_led_seq,
+                }
+            )
 
         self._update_progress()
 
@@ -1343,6 +1832,8 @@ class MainWindow(QMainWindow):
         """Dựng câu tiếng Việt hiển thị trong log từ mã NG cố định — không bao
         giờ để mã (tiếng Anh) lộ thẳng ra log, luôn đi qua đây để đồng bộ."""
         entry = entry or {}
+        if code == NG_SCAN_FAILED:
+            return "Không quét được mã"
         if code == NG_NO_PROFILE_SELECTED:
             return "Chưa chọn Chassis Rear"
         if code == NG_LED_SUFFIX_NOT_MATCH:
@@ -1358,10 +1849,17 @@ class MainWindow(QMainWindow):
         if code == NG_FULL_VENDOR_NOT_MATCH:
             no_bottom = entry.get("no_bottom")
             no_led = entry.get("no_led")
-            led_ref_text = self._last_ok_led_text.get("ledbar1") or self._last_ok_led_text.get("ledbar2")
+            led_ref_text = self._last_ok_led_text.get(
+                "ledbar1"
+            ) or self._last_ok_led_text.get("ledbar2")
             if not led_ref_text:
                 return "Chưa có mã LED bar đọc đúng để đối chiếu vendor"
-            if not no_bottom or not no_led or no_bottom > len(text) or no_led > len(led_ref_text):
+            if (
+                not no_bottom
+                or not no_led
+                or no_bottom > len(text)
+                or no_led > len(led_ref_text)
+            ):
                 return "Thiếu vị trí No Bottom/No Led để đối chiếu vendor"
             return (
                 f"Vendor không khớp: ký tự {no_bottom}='{text[no_bottom - 1]}' "
@@ -1376,20 +1874,36 @@ class MainWindow(QMainWindow):
             if first_scan_at is not None:
                 return f"Trùng mã trong ngày (lần đầu lúc {first_scan_at:%H:%M:%S})"
             return "Trùng mã trong ngày"
-        return code
+        return f"Lỗi không xác định ({code})"
 
-    def _classify_led_bar(self, name, text):
-        """Xác định code này thuộc cột LED BAR 1 hay 2 (không cố định theo
-        reader vật lý), và có hợp lệ hay không:
+    def _pick_fallback_led_column(self):
+        """Chọn cột LED BAR để gán tạm cho mã không xác định được cột qua nội
+        dung (chưa chọn profile, hoặc không khớp cả led1/led2) — ưu tiên
+        ledbar1 nếu còn thiếu số lượng, rồi mới xét ledbar2 (chỉ nếu đang mở
+        khoá, quota > 0). Cả 2 đã đủ/khoá -> trả ledbar1, on_data_received tự
+        phát hiện đã đủ và bỏ qua mã dư (logic sẵn có)."""
+        w1, w2 = self._column_widgets["ledbar1"], self._column_widgets["ledbar2"]
+        if self._received_counts["ledbar1"] < w1["spin"].value():
+            return "ledbar1"
+        if (
+            w2["spin"].value() > 0
+            and self._received_counts["ledbar2"] < w2["spin"].value()
+        ):
+            return "ledbar2"
+        return "ledbar1"
+
+    def _classify_led_bar(self, text):
+        """Xác định code này thuộc cột LED BAR 1 hay 2 — theo NỘI DUNG mã,
+        không phụ thuộc reader vật lý nào gửi lên (mọi reader vai trò LED BAR
+        đều gọi qua đây):
         1. Số ký tự phải bằng Length Code LED (theo Chassis Rear đang chọn).
         2. 5 ký tự cuối phải giống 5 ký tự cuối của Code LED 1 hoặc Code LED 2.
-        Nếu không thỏa 1 trong 2 điều kiện trên với cả 2 code, xếp vào cột mặc
-        định theo đúng reader vật lý (reader LED BAR 1 -> cột 1, reader LED
-        BAR 2 -> cột 2) và đánh dấu NG."""
-        default_column = READER_COLUMN_MAP[name]
+        Nếu không thỏa 1 trong 2 điều kiện trên với cả 2 code (hoặc chưa chọn
+        profile), không thể xác định cột qua nội dung -> gán tạm qua
+        _pick_fallback_led_column() và đánh dấu NG."""
         entry = self._current_entry()
         if not entry:
-            return default_column, False, NG_NO_PROFILE_SELECTED
+            return self._pick_fallback_led_column(), False, NG_NO_PROFILE_SELECTED
 
         length_led = entry.get("length_led")
         code_led1 = entry.get("led1") or ""
@@ -1404,7 +1918,7 @@ class MainWindow(QMainWindow):
         if match2:
             return "ledbar2", True, None
 
-        return default_column, False, NG_LED_SUFFIX_NOT_MATCH
+        return self._pick_fallback_led_column(), False, NG_LED_SUFFIX_NOT_MATCH
 
     def _classify_qr_bottom(self, text):
         """Kiểm tra mã QRCODE BOTTOM (reader này luôn đọc đúng cột, không cần
@@ -1440,10 +1954,17 @@ class MainWindow(QMainWindow):
         if chassis_in_qr != chassis_expected:
             return False, NG_CHASSIS_NOT_MATCH, None
 
-        led_ref_text = self._last_ok_led_text.get("ledbar1") or self._last_ok_led_text.get("ledbar2")
+        led_ref_text = self._last_ok_led_text.get(
+            "ledbar1"
+        ) or self._last_ok_led_text.get("ledbar2")
         if not led_ref_text:
             return False, NG_FULL_VENDOR_NOT_MATCH, None
-        if not no_bottom or not no_led or no_bottom > len(text) or no_led > len(led_ref_text):
+        if (
+            not no_bottom
+            or not no_led
+            or no_bottom > len(text)
+            or no_led > len(led_ref_text)
+        ):
             return False, NG_FULL_VENDOR_NOT_MATCH, None
         if text[no_bottom - 1] != led_ref_text[no_led - 1]:
             return False, NG_FULL_VENDOR_NOT_MATCH, None
@@ -1463,7 +1984,9 @@ class MainWindow(QMainWindow):
 
     def on_status_changed(self, name, channel, status):
         self._status.setdefault(name, {})[channel] = status
-        self._append_log(f"[{self._now()}] [{name}] Trạng thái ({channel}): {STATUS_LABELS.get(status, status)}")
+        self._append_log(
+            f"[{self._now()}] [{name}] Trạng thái ({channel}): {STATUS_LABELS.get(status, status)}"
+        )
         self._update_reader_row_status(name)
 
     def _update_reader_row_status(self, name):
@@ -1472,7 +1995,11 @@ class MainWindow(QMainWindow):
             if table.item(row, 0).text() == name:
                 item = table.item(row, 1)
                 item.setText(self._status_label(name))
-                item.setForeground(STATUS_COLORS.get(self._status.get(name, {}).get("data"), QColor("black")))
+                item.setForeground(
+                    STATUS_COLORS.get(
+                        self._status.get(name, {}).get("data"), QColor("black")
+                    )
+                )
                 return
 
     def _update_reader_input(self, name, text):
@@ -1528,8 +2055,30 @@ class MainWindow(QMainWindow):
         # lúc vừa nhận, vì lúc đó LED bar tham chiếu (_last_ok_led_text) có
         # thể chưa đủ nếu QR bottom về trước LED bar. Tới đây, cả phiên đã đủ
         # dữ liệu (progress bar đầy) nên kết quả luôn đúng bất kể thứ tự về.
-        own_is_ok, own_code, matched_led_code = self._classify_qr_bottom(qr["text"])
-        _apply_item_result_color(qr["item"], RESULT_ITEM_COLORS.get(own_is_ok, RESULT_ITEM_COLORS[None]))
+        if qr["text"] == READER_SCAN_ERROR_TEXT:
+            # Xem chú thích tương tự ở on_data_received (LED bar) — reader
+            # báo lỗi đọc rõ ràng, không chạy qua 5 bước đối chiếu của
+            # _classify_qr_bottom (chắc chắn NG, tránh thông báo gây nhiễu
+            # như "Sai độ dài mã QRCODE BOTTOM: 5 ký tự...").
+            own_is_ok, own_code, matched_led_code = False, NG_SCAN_FAILED, None
+        else:
+            own_is_ok, own_code, matched_led_code = self._classify_qr_bottom(qr["text"])
+        # own_code=NG_FULL_VENDOR_NOT_MATCH nhưng KHÔNG có bất kỳ mã LED OK
+        # nào trong phiên (led_ref_text rỗng ở _classify_qr_bottom) — nghĩa
+        # là QR bottom KHÔNG THỂ xác minh được (thiếu tham chiếu), không
+        # phải "chắc chắn sai". Không nên tô đỏ như 1 lỗi thật sự của chính
+        # QR bottom — dùng màu trung tính (None/xám) để phản ánh đúng "chưa
+        # xác định được", tránh đánh lừa operator giống bug LED-lây-QR đã sửa.
+        own_unverifiable = own_code == NG_FULL_VENDOR_NOT_MATCH and not (
+            self._last_ok_led_text.get("ledbar1")
+            or self._last_ok_led_text.get("ledbar2")
+        )
+        if own_unverifiable:
+            _apply_item_result_color(qr["item"], RESULT_ITEM_COLORS[None])
+        else:
+            _apply_item_result_color(
+                qr["item"], RESULT_ITEM_COLORS.get(own_is_ok, RESULT_ITEM_COLORS[None])
+            )
 
         led_ledbar1 = self._session_led_items["ledbar1"]
         led_ledbar2 = self._session_led_items["ledbar2"]
@@ -1538,27 +2087,61 @@ class MainWindow(QMainWindow):
         is_ok = own_is_ok and all_led_ok
         if is_ok:
             ng_reason = None
-        elif not own_is_ok:
-            ng_reason = own_code
+            ng_text = None
+        elif not all_led_ok:
+            # LED bar sai là nguyên nhân gốc rất có thể khiến QR bottom không
+            # đối chiếu được vendor (NG_FULL_VENDOR_NOT_MATCH do thiếu tham
+            # chiếu — _classify_qr_bottom không có mã LED OK nào để so) — ưu
+            # tiên báo đúng lỗi LED bar, tránh đánh lừa operator nghĩ QR
+            # bottom sai trong khi QR bottom có thể vẫn đúng (LED sai lây
+            # sang QR bottom, không phải ngược lại).
+            # min(..., key=seq) chứ không phải next() trên list nối — next()
+            # sẽ luôn ưu tiên hết ledbar1 rồi mới xét ledbar2 (mất thứ tự
+            # thời gian NHẬN THẬT giữa 2 cột nếu cả 2 đều có mã NG); seq gán
+            # lúc on_data_received nhận mã mới phản ánh đúng mã nào lỗi TRƯỚC.
+            ng_item = min(
+                (it for it in led_ledbar1 + led_ledbar2 if not it["is_ok"]),
+                key=lambda it: it["seq"],
+            )
+            ng_reason = ng_item["code"]
+            # _describe_ng cần đúng TEXT của item đang bị NG để dựng câu (vd
+            # độ dài mã) — dùng qr["text"] (35 ký tự QR bottom) ở đây sẽ ra
+            # câu sai hoàn toàn ("Sai độ dài mã LED: 35 ký tự...") vì lẫn văn
+            # bản của QR bottom vào lỗi của LED bar.
+            ng_text = ng_item["text"]
         else:
-            ng_reason = next(it["code"] for it in led_ledbar1 + led_ledbar2 if not it["is_ok"])
+            # LED bar đều OK — QR bottom sai là lỗi thật của chính nó.
+            ng_reason = own_code
+            ng_text = qr["text"]
 
         profile_id = entry.get("profile_id") if entry else None
         # own_is_ok (không phải is_ok tổng hợp) — theo doc: "duplicate_key vẫn
         # nên gửi nếu parse được", kể cả khi final NG do LED bar lỗi (QR bottom
         # tự nó vẫn hợp lệ, chỉ NG vì LED bar), không chỉ khi final OK hẳn.
         duplicate_key = compute_duplicate_key(qr["text"]) if own_is_ok else None
-        qr_data = self._build_qr_data(qr["text"], entry, matched_led_code, duplicate_key)
+        qr_data = self._build_qr_data(
+            qr["text"], entry, matched_led_code, duplicate_key
+        )
         led_items_data = self._build_led_items_data(led_ledbar1, led_ledbar2, entry)
         scan_at = datetime.now().astimezone()
 
         try:
             final_is_ok, final_reason, first_scan_at, local_scan_id = record_full_scan(
-                profile_id, qr_data, led_items_data, is_ok, ng_reason, scan_at=scan_at,
+                profile_id,
+                qr_data,
+                led_items_data,
+                is_ok,
+                ng_reason,
+                scan_at=scan_at,
             )
         except Exception as exc:
             self._append_log(f"[{self._now()}] Lỗi ghi local DB: {exc}")
-            final_is_ok, final_reason, first_scan_at, local_scan_id = is_ok, ng_reason, None, None
+            final_is_ok, final_reason, first_scan_at, local_scan_id = (
+                is_ok,
+                ng_reason,
+                None,
+                None,
+            )
 
         if final_reason == NG_LOCAL_DUPLICATE:
             self._last_duplicate_first_scan_at = first_scan_at
@@ -1571,11 +2154,36 @@ class MainWindow(QMainWindow):
             _apply_item_result_color(qr["item"], PENDING_ITEM_COLOR)
             self.set_result_status("pending")
             if local_scan_id is not None:
-                self._pending_scan_ui[local_scan_id] = (self._session_generation, qr["item"])
+                self._pending_scan_ui[local_scan_id] = (
+                    self._session_generation,
+                    qr["item"],
+                )
         else:
-            _apply_item_result_color(qr["item"], RESULT_ITEM_COLORS[False])
-            detail = self._describe_ng(final_reason, qr["text"], entry)
-            self._append_log(f"[{self._now()}] [QRCODE BOTTOM] Kết quả sản phẩm: NG ({detail})")
+            # Chỉ tô đỏ khung QR bottom khi CHÍNH QR bottom là nguyên nhân NG
+            # (own_is_ok=False VÀ xác định được thật — không phải chỉ vì
+            # thiếu tham chiếu LED, xem own_unverifiable ở trên), hoặc trùng
+            # mã (trùng mã cũng gắn với chính mã QR bottom này). Nếu NG do
+            # LED bar sai (own_is_ok=True) hoặc không xác minh được
+            # (own_unverifiable), GIỮ màu đã set ở trên (xanh/xám) — trước
+            # đây tô đè đỏ vô điều kiện ở đây khiến khung QR bottom báo sai
+            # dù bản thân nó đúng/chưa rõ, mâu thuẫn với lý do NG thật đã
+            # hiển thị trên banner (LED bar).
+            qr_is_culprit = (
+                not own_is_ok and not own_unverifiable
+            ) or final_reason == NG_LOCAL_DUPLICATE
+            if qr_is_culprit:
+                _apply_item_result_color(qr["item"], RESULT_ITEM_COLORS[False])
+            # ng_text rỗng khi final_reason bị record_full_scan ghi đè thành
+            # NG_LOCAL_DUPLICATE (phát hiện trùng phía DB, không phải nhánh
+            # ng_reason đã tính ở trên) — _describe_ng không cần text cho
+            # trường hợp đó nên fallback qr["text"] chỉ để không truyền None.
+            detail = self._describe_ng(final_reason, ng_text or qr["text"], entry)
+            add_local_notification("LOCAL_SCAN_NG", "ERROR", "Kết quả: NG", detail)
+            # Bấm ngay 1 lần thay vì chờ _notification_poll_timer (tối đa
+            # NOTIFICATION_POLL_INTERVAL_MS sau) — labelResultStatus đổi tức
+            # thì ngay dòng dưới, để banner đổi TRỄ hơn dễ gây cảm giác lệch/
+            # giật cho operator dù cùng 1 kết quả.
+            self._poll_latest_notification()
             self.set_result_status("ng")
 
         # OK/pending: không xoá màn hình ngay, chờ mã mới của sản phẩm tiếp
@@ -1584,6 +2192,7 @@ class MainWindow(QMainWindow):
         # hiển thị tới khi bấm Reset thủ công.
         self._session_pending_clear = final_is_ok
         self._session_led_items = {"ledbar1": [], "ledbar2": []}
+        self._session_led_seq = 0
         self._session_qr = None
 
         # Submit lên server — CẢ OK LẪN NG (doc: "Local NG vẫn gửi server để
@@ -1593,9 +2202,19 @@ class MainWindow(QMainWindow):
         # payload rỗng gần hết). Chỉ bỏ qua khi thiếu profile_id (bắt buộc —
         # chưa chọn Chassis Rear thì không đủ dữ liệu hợp lệ để gửi).
         if profile_id is None:
-            self._append_log(f"[{self._now()}] [Scan] Bỏ qua submit — chưa chọn Chassis Rear.")
+            self._append_log(
+                f"[{self._now()}] [Scan] Bỏ qua submit — chưa chọn Chassis Rear."
+            )
         elif local_scan_id is not None:
-            self._submit_scan(local_scan_id, qr_data, led_items_data, profile_id, final_is_ok, final_reason, scan_at)
+            self._submit_scan(
+                local_scan_id,
+                qr_data,
+                led_items_data,
+                profile_id,
+                final_is_ok,
+                final_reason,
+                scan_at,
+            )
 
     def _build_qr_data(self, text, entry, matched_led_code, duplicate_key):
         entry = entry or {}
@@ -1621,24 +2240,37 @@ class MainWindow(QMainWindow):
         for slot, items in ((1, ledbar1_items), (2, ledbar2_items)):
             for index, it in enumerate(items, start=1):
                 text = it["text"]
-                vendor_char = text[no_led - 1] if no_led and len(text) >= no_led else None
-                result.append({
-                    "led_slot": slot,
-                    "led_index": index,
-                    "led_scan_raw": text,
-                    "led_lot_no": text[12:15] if len(text) >= 15 else None,
-                    "vendor_char": vendor_char,
-                    "led_suffix": text[-5:] if len(text) >= 5 else text,
-                    "local_status": "OK" if it["is_ok"] else "NG",
-                    "ng_reason": it["code"],
-                })
+                vendor_char = (
+                    text[no_led - 1] if no_led and len(text) >= no_led else None
+                )
+                result.append(
+                    {
+                        "led_slot": slot,
+                        "led_index": index,
+                        "led_scan_raw": text,
+                        "led_lot_no": text[12:15] if len(text) >= 15 else None,
+                        "vendor_char": vendor_char,
+                        "led_suffix": text[-5:] if len(text) >= 5 else text,
+                        "local_status": "OK" if it["is_ok"] else "NG",
+                        "ng_reason": it["code"],
+                    }
+                )
         return result
 
     ######################################################################
     # Submit scan lên server (POST /api/scans/submit)
     ######################################################################
 
-    def _submit_scan(self, local_scan_id, qr_data, led_items_data, profile_id, is_ok, ng_reason, scan_at):
+    def _submit_scan(
+        self,
+        local_scan_id,
+        qr_data,
+        led_items_data,
+        profile_id,
+        is_ok,
+        ng_reason,
+        scan_at,
+    ):
         payload = {
             "local_scan_id": local_scan_id,
             "machine_code": get_app_settings().get("machine_code"),
@@ -1659,9 +2291,13 @@ class MainWindow(QMainWindow):
             "chassis_scan_raw": qr_data.get("chassis_scan_raw"),
             "led_scans": [
                 {
-                    "slot": item["led_slot"], "index": item["led_index"], "raw": item["led_scan_raw"],
-                    "lot_no": item.get("led_lot_no"), "vendor_char": item.get("vendor_char"),
-                    "suffix": item.get("led_suffix"), "status": item.get("local_status"),
+                    "slot": item["led_slot"],
+                    "index": item["led_index"],
+                    "raw": item["led_scan_raw"],
+                    "lot_no": item.get("led_lot_no"),
+                    "vendor_char": item.get("vendor_char"),
+                    "suffix": item.get("led_suffix"),
+                    "status": item.get("local_status"),
                     "ng_reason": item.get("ng_reason"),
                 }
                 for item in led_items_data
@@ -1670,7 +2306,9 @@ class MainWindow(QMainWindow):
             "local_ng_reason": ng_reason,
             "scan_at": scan_at.isoformat(),
         }
-        self.server_worker.enqueue("scan_submit", correlation_id=local_scan_id, scan_payload=payload)
+        self.server_worker.enqueue(
+            "scan_submit", correlation_id=local_scan_id, scan_payload=payload
+        )
 
     def _handle_scan_submit_result(self, local_scan_id, response):
         code = response.get("code")
@@ -1683,9 +2321,12 @@ class MainWindow(QMainWindow):
         self._reflect_scan_submit_ui(local_scan_id, code)
         if code == "SERVER_DUPLICATE":
             add_local_notification(
-                "SERVER_DUPLICATE", "ERROR", "Server phát hiện trùng",
-                f"local_scan_id={local_scan_id}",
+                "SERVER_DUPLICATE",
+                "ERROR",
+                "Server phát hiện trùng",
+                f"Server phát hiện mã quét bị trùng lặp (mã: {local_scan_id}).",
             )
+            self._poll_latest_notification()
 
     def _reflect_scan_submit_ui(self, local_scan_id, code):
         """Chỉ đụng UI nếu operator CHƯA chuyển sang sản phẩm khác từ lúc
@@ -1701,9 +2342,23 @@ class MainWindow(QMainWindow):
         if code == "SERVER_OK":
             _apply_item_result_color(item, RESULT_ITEM_COLORS[True])
             self.set_result_status("ok")
+            add_local_notification(
+                "LOCAL_SCAN_OK", "INFO", "Kết quả: OK", "Sản phẩm đạt yêu cầu."
+            )
+            self._poll_latest_notification()  # xem ghi chú ở _finalize_scan_session — tránh banner đổi trễ hơn label
         else:
             _apply_item_result_color(item, RESULT_ITEM_COLORS[False])
             self.set_result_status("ng")
+            if (
+                code != "SERVER_DUPLICATE"
+            ):  # SERVER_DUPLICATE đã có notification riêng, tránh trùng
+                add_local_notification(
+                    "LOCAL_SCAN_NG",
+                    "ERROR",
+                    "Kết quả: NG",
+                    "Server ghi nhận kết quả không đạt.",
+                )
+                self._poll_latest_notification()
 
     ######################################################################
     # Reset — dùng khi NG, xoá mã đã nhận để bắt đầu đợt kiểm mới
@@ -1720,6 +2375,7 @@ class MainWindow(QMainWindow):
         self._last_input.clear()
         self._last_ok_led_text.clear()
         self._session_led_items = {"ledbar1": [], "ledbar2": []}
+        self._session_led_seq = 0
         self._session_qr = None
         self._rebuild_reader_table()
         self._update_progress()
@@ -1731,6 +2387,7 @@ class MainWindow(QMainWindow):
     def on_reset_clicked(self):
         self._clear_session()
         self._session_pending_clear = False
+        self._reset_notification_banner()
         self._append_log(f"[{self._now()}] Reset — đã xoá mã đã nhận.")
 
     def _show_scan_ignored_warning(self):
@@ -1785,9 +2442,13 @@ class MainWindow(QMainWindow):
 
         self._stop_result_alerts()
         self._result_status = result
-        text = {"ok": "OK", "ng": "NG", "pending": "PENDING", None: "-"}.get(result, "-")
+        text = {"ok": "OK", "ng": "NG", "pending": "PENDING", None: "-"}.get(
+            result, "-"
+        )
         self.labelResultStatus.setText(text)
-        self.labelResultStatus.setStyleSheet(RESULT_STYLE.get(result, RESULT_STYLE[None]))
+        self.labelResultStatus.setStyleSheet(
+            RESULT_STYLE.get(result, RESULT_STYLE[None])
+        )
 
         if result in ("ok", "ng"):
             self._start_result_alerts(result)
@@ -1802,7 +2463,11 @@ class MainWindow(QMainWindow):
             self._stop_result_alerts()
             return
         self._result_blink_visible = not self._result_blink_visible
-        style = RESULT_STYLE[self._result_status] if self._result_blink_visible else RESULT_BLINK_OFF_STYLE
+        style = (
+            RESULT_STYLE[self._result_status]
+            if self._result_blink_visible
+            else RESULT_BLINK_OFF_STYLE
+        )
         self.labelResultStatus.setStyleSheet(style)
 
     def _play_result_sound(self, result):
@@ -1810,7 +2475,9 @@ class MainWindow(QMainWindow):
         if not path or not os.path.isfile(path):
             if path not in self._reported_missing_sound_paths:
                 self._reported_missing_sound_paths.add(path)
-                self._append_log(f"[{self._now()}] [Âm thanh] Không tìm thấy file: {path}")
+                self._append_log(
+                    f"[{self._now()}] [Âm thanh] Không tìm thấy file: {path}"
+                )
             return
 
         media = QMediaContent(QUrl.fromLocalFile(os.path.abspath(path)))
@@ -1829,7 +2496,10 @@ class MainWindow(QMainWindow):
     def _on_result_audio_error(self, error):
         if error == QMediaPlayer.NoError:
             return
-        message = self._result_audio_player.errorString() or f"QMediaPlayer error {int(error)}"
+        message = (
+            self._result_audio_player.errorString()
+            or f"QMediaPlayer error {int(error)}"
+        )
         key = (int(error), message)
         if key in self._reported_result_audio_errors:
             return
@@ -1837,17 +2507,48 @@ class MainWindow(QMainWindow):
         self._append_log(f"[{self._now()}] [Âm thanh] {message}")
 
     ######################################################################
+    # Banner notification (thay chỗ Log cũ) — đọc lại local_notifications,
+    # mỗi lần chỉ hiện 1 thông báo mới nhất, giữ nguyên tới khi có cái mới.
+    ######################################################################
+
+    def _init_notification_banner(self):
+        self.labelNotificationBanner.setText("Chưa có thông báo.")
+        self._apply_notification_style("_default")
+        self._notification_poll_timer = QTimer(self)
+        self._notification_poll_timer.setInterval(NOTIFICATION_POLL_INTERVAL_MS)
+        self._notification_poll_timer.timeout.connect(self._poll_latest_notification)
+        self._notification_poll_timer.start()
+        self._poll_latest_notification()
+
+    def _apply_notification_style(self, severity):
+        color = NOTIFICATION_SEVERITY_TEXT_COLORS.get(
+            severity, NOTIFICATION_SEVERITY_TEXT_COLORS["_default"]
+        )
+        self.labelNotificationBanner.setStyleSheet(
+            NOTIFICATION_BANNER_BASE_STYLE + f" color: {color};"
+        )
+
+    def _reset_notification_banner(self):
+        # Chỉ đổi hiển thị — không cần đụng DB: bản NEW gần nhất (nếu có) đã
+        # được _poll_latest_notification() đánh dấu READ ngay khi hiện lên
+        # banner từ trước, nên vòng poll tiếp theo sẽ không tự ghi đè lại.
+        self.labelNotificationBanner.setText("Chưa có thông báo.")
+        self._apply_notification_style("_default")
+
+    def _poll_latest_notification(self):
+        noti = get_latest_unread_notification()
+        if noti is None:
+            return
+        self.labelNotificationBanner.setText(f"{noti['title']}\n{noti['message']}")
+        self._apply_notification_style(noti["severity"])
+        mark_notification_read(noti["id"])
+
+    ######################################################################
     # Log chung (dùng lại được cho thông báo ứng dụng)
     ######################################################################
 
     def _append_log(self, line):
-        self.textEditLog.append(line)
-        doc = self.textEditLog.document()
-        if doc.blockCount() > MAX_LOG_LINES:
-            cursor = self.textEditLog.textCursor()
-            cursor.movePosition(cursor.Start)
-            cursor.movePosition(cursor.Down, cursor.KeepAnchor, doc.blockCount() - MAX_LOG_LINES)
-            cursor.removeSelectedText()
+        log_event(line)
 
     @staticmethod
     def _now():

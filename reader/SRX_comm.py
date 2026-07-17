@@ -1,6 +1,5 @@
 import socket
 import threading
-import time
 import traceback
 
 
@@ -17,6 +16,15 @@ class SRXConnection:
         self.connected = False
 
         self._lock = threading.RLock()
+        # time.sleep() thường (dòng reconnect cũ) không thể bị đánh thức sớm
+        # khi stop() gọi giữa lúc đang ngủ chờ retry — khiến thread nền có
+        # thể còn sống tới reconnect_interval giây sau khi đã "stop", trong
+        # khi nơi gọi (SRXReaderQt/_SocketWorker.stop()) chỉ đợi có hạn rồi
+        # cho phép xoá/deleteLater() reader dù thread vẫn đang chạy — Qt gọi
+        # đây là "QThread: Destroyed while thread is still running", crash
+        # cứng (segfault/abort), không phải exception Python bắt được. Event
+        # cho phép stop() đánh thức ngay lập tức thay vì phải chờ hết giấc ngủ.
+        self._stop_event = threading.Event()
 
         self.buffer = b""
 
@@ -35,6 +43,7 @@ class SRXConnection:
             return
 
         self.running = True
+        self._stop_event.clear()
 
         threading.Thread(target=self.run_loop, daemon=True).start()
 
@@ -43,6 +52,7 @@ class SRXConnection:
     def stop(self):
 
         self.running = False
+        self._stop_event.set()
 
         with self._lock:
             sock, self.sock, self.connected = self.sock, None, False
@@ -81,7 +91,7 @@ class SRXConnection:
 
             except Exception:
 
-                time.sleep(self.reconnect_interval)
+                self._stop_event.wait(self.reconnect_interval)
 
     ######################################################################
 
@@ -133,7 +143,7 @@ class SRXConnection:
                 self._notify_status("disconnected")
 
                 if self.running:
-                    time.sleep(self.reconnect_interval)
+                    self._stop_event.wait(self.reconnect_interval)
 
     ######################################################################
 

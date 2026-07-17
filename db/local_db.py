@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 import psycopg
 
+from app_logger import log_event
 from app_paths import get_bundle_dir, get_writable_dir
 
 # local_db_config.json chứa mật khẩu, user tự sửa được — nằm cạnh .exe thật
@@ -153,6 +154,45 @@ def add_local_notification(
                     related_local_scan_id, related_batch_code, related_server_command_id,
                     json.dumps(payload_json) if payload_json is not None else "{}",
                 ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    log_event(f"[NOTI][{severity}] {noti_code} — {title}: {message}")
+
+
+def get_latest_unread_notification():
+    """Bản ghi status='NEW' mới nhất — dùng cho banner MainWindow poll. None
+    nếu không có gì mới."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, noti_code, severity, title, message, status, created_at
+                FROM local_notifications WHERE status = 'NEW'
+                ORDER BY created_at DESC, id DESC LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+            columns = [desc[0] for desc in cur.description] if row else []
+    finally:
+        conn.close()
+    return dict(zip(columns, row)) if row else None
+
+
+def mark_notification_read(notification_id):
+    """Đánh dấu READ cho notification_id VÀ mọi bản NEW cũ hơn (id <=) — banner
+    chỉ hiện bản mới nhất, các NEW bị bỏ qua giữa chừng (polling không kịp bắt)
+    coi như đã "xem" luôn. Không xoá dữ liệu — lịch sử đầy đủ vẫn tra được qua
+    log/app_events.log hoặc bảng local_notifications."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE local_notifications SET status = 'READ', read_at = now() "
+                "WHERE status = 'NEW' AND id <= %s",
+                (notification_id,),
             )
         conn.commit()
     finally:

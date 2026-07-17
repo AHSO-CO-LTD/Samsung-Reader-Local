@@ -1,6 +1,7 @@
 """
-Mock TCP server giả lập 3 reader SR-X (LED BAR 1/2, QRCODE BOTTOM) để test
-khi chưa có phần cứng thật — port khớp sẵn với readers_config.json.
+Mock TCP server giả lập nhiều reader SR-X (N reader vai trò LED BAR + 1
+QRCODE BOTTOM) để test khi chưa có phần cứng thật — port khớp sẵn với
+readers_config.json.
 
 Mỗi lần bấm "LON (Trigger ON)" trong app (hoặc qua Config Window), server đọc
 LẠI file mock_codes.json rồi trả về mã kế tiếp trong danh sách ứng với port đó
@@ -17,8 +18,10 @@ import os
 import socket
 import threading
 
-# Port khớp với readers_config.json: LED BAR 1=9101, LED BAR 2=9201, QRCODE BOTTOM=9301.
-PORTS = [9101, 9201, 9301]
+# Port khớp với readers_config.json: 9101/9201/9401 = 3 reader vai trò LED BAR
+# (không còn gắn cứng "LED BAR 1 -> cột 1" — cột thật xác định qua nội dung
+# mã lúc chạy), 9301 = QRCODE BOTTOM (dedicated, không đổi).
+PORTS = [9101, 9201, 9401, 9301]
 
 CODES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mock_codes.json")
 
@@ -89,7 +92,7 @@ def main():
         t.start()
         threads.append(t)
 
-    print(f"Ca 3 mock reader dang chay. Sua {CODES_FILE} de doi ma test (khong can restart).")
+    print(f"Ca {len(PORTS)} mock reader dang chay. Sua {CODES_FILE} de doi ma test (khong can restart).")
     print("Nhan Ctrl+C de dung.")
     try:
         for t in threads:

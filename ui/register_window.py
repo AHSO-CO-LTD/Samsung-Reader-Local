@@ -5,6 +5,7 @@ from PyQt5 import uic
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QDialog
 
+from app_logger import log_event
 from db.local_db import add_local_notification, get_app_settings, get_scan_counts, update_app_settings
 from machine.identity import ensure_machine_identity
 from app_paths import get_bundle_dir
@@ -25,12 +26,12 @@ PENDING_SYNC_REFRESH_INTERVAL_MS = 5000
 # registration_status trong schema chỉ có 5 giá trị (NOT_REQUESTED/PENDING/
 # APPROVED/REJECTED/DUPLICATE), 2 khoá PENDING_* chỉ là view-state cục bộ.
 STATUS_TEXT = {
-    "NOT_REQUESTED": "No registration request sent",
-    "PENDING_LICENSE": "Waiting for license",
-    "PENDING_APPROVAL": "License activated — waiting for approval",
-    "APPROVED": "Approved",
-    "REJECTED": "Rejected",
-    "DUPLICATE": "Duplicate data",
+    "NOT_REQUESTED": "Chưa gửi yêu cầu đăng ký",
+    "PENDING_LICENSE": "Đang chờ cấp license",
+    "PENDING_APPROVAL": "License đã kích hoạt — đang chờ duyệt",
+    "APPROVED": "Đã duyệt",
+    "REJECTED": "Đã bị từ chối",
+    "DUPLICATE": "Dữ liệu bị trùng",
 }
 
 STATUS_STYLES = {
@@ -53,7 +54,7 @@ class RegisterWindow(QDialog):
     APPROVED. Dùng chung server_worker (ServerWorker) với MainWindow — mỗi
     job_kind tự lọc theo tên, không đụng job "health" của MainWindow."""
 
-    def __init__(self, server_worker, on_sync_now=None, on_check_data=None, parent=None):
+    def __init__(self, server_worker, on_sync_now=None, on_check_data=None, on_sync_profile=None, parent=None):
         super().__init__(parent)
         uic.loadUi(UI_PATH, self)
 
@@ -63,17 +64,20 @@ class RegisterWindow(QDialog):
 
         # Callback do MainWindow truyền vào (thường là
         # lambda: self._maybe_start_sync_batch("MANUAL") /
-        # lambda: self._start_reconcile_check(manual=True)) — dialog này
-        # không tự giữ state _batch_in_flight/_reconcile_in_flight/_serial/
-        # _uid nên không tự chạy được logic sync/reconcile, chỉ chuyển tiếp
-        # yêu cầu về nơi có đủ state (MainWindow).
+        # lambda: self._start_reconcile_check(manual=True) /
+        # lambda: self._check_machine_config()) — dialog này không tự giữ
+        # state _batch_in_flight/_reconcile_in_flight/_serial/_uid nên không
+        # tự chạy được logic sync/reconcile/config, chỉ chuyển tiếp yêu cầu
+        # về nơi có đủ state (MainWindow).
         self._on_sync_now = on_sync_now
         self._on_check_data = on_check_data
+        self._on_sync_profile = on_sync_profile
 
         self.pushButtonSendRequest.clicked.connect(self.on_send_request_clicked)
         self.pushButtonRefreshStatus.clicked.connect(self.on_refresh_clicked)
         self.pushButtonSyncNow.clicked.connect(self.on_sync_now_clicked)
         self.pushButtonCheckData.clicked.connect(self.on_check_data_clicked)
+        self.pushButtonSyncProfile.clicked.connect(self.on_sync_profile_clicked)
         self.pushButtonClose.clicked.connect(self.close)
 
         self._poll_timer = QTimer(self)
@@ -158,27 +162,27 @@ class RegisterWindow(QDialog):
         if view_state == "PENDING_LICENSE":
             add_local_notification(
                 "LOCAL_REGISTER_WAITING", "INFO",
-                "Registration pending", detail or "Waiting for license.",
+                "Đang chờ đăng ký", detail or "Đang chờ cấp license.",
             )
         elif view_state == "PENDING_APPROVAL":
             add_local_notification(
                 "LOCAL_REGISTER_WAITING", "INFO",
-                "Registration pending", detail or "License activated, waiting for approval.",
+                "Đang chờ đăng ký", detail or "License đã kích hoạt, đang chờ duyệt.",
             )
         elif view_state == "APPROVED":
             add_local_notification(
                 "LOCAL_REGISTER_APPROVED", "INFO",
-                "Registration approved", detail or "Machine registration approved.",
+                "Đã duyệt đăng ký", detail or "Máy có thể bắt đầu hoạt động bình thường.",
             )
         elif view_state == "REJECTED":
             add_local_notification(
                 "LOCAL_REGISTER_REJECTED", "ERROR",
-                "Registration rejected", detail or "Machine registration was rejected.",
+                "Đăng ký bị từ chối", detail or "Yêu cầu đăng ký máy đã bị từ chối.",
             )
         elif view_state == "DUPLICATE":
             add_local_notification(
                 "LOCAL_MACHINE_BLOCKED", "CRITICAL",
-                "Duplicate registration data", detail or "Registration blocked due to duplicate data.",
+                "Dữ liệu đăng ký bị trùng", detail or "Đăng ký bị chặn do dữ liệu trùng lặp.",
             )
 
     ######################################################################
@@ -222,6 +226,17 @@ class RegisterWindow(QDialog):
         if self._on_check_data is not None:
             self._on_check_data()
 
+    ######################################################################
+    # Machine Profile — profile/config chỉ tự đồng bộ lúc app khởi động,
+    # thay đổi trong lúc chạy (thêm/sửa profile trên server) cần bấm nút
+    # này thay vì phải khởi động lại app. Logic thật (enqueue "config" +
+    # apply_machine_config) ở MainWindow, dialog này chỉ chuyển tiếp.
+    ######################################################################
+
+    def on_sync_profile_clicked(self):
+        if self._on_sync_profile is not None:
+            self._on_sync_profile()
+
     def _refresh_pending_sync_label(self):
         count = get_scan_counts().get("pending_sync", 0)
         self.labelPendingSync.setText(f"Pending sync: {count}")
@@ -259,22 +274,21 @@ class RegisterWindow(QDialog):
                 registration_request_id=data.get("request_id"),
                 registration_status="PENDING",
                 local_runtime_status="REGISTERING",
-                local_status_message="Request sent, waiting for license.",
+                local_status_message="Đã gửi yêu cầu, đang chờ cấp license.",
                 local_status_updated_at=now,
             )
-            self._append_log(f"Registration request sent — request_id={data.get('request_id')}.")
             add_local_notification(
                 "LOCAL_REGISTER_REQUEST_SENT", "INFO",
-                "Registration request sent", f"request_id={data.get('request_id')}",
+                "Đã gửi yêu cầu đăng ký", "Đang chờ cấp license.",
             )
         elif code == "MACHINE_REGISTER_DUPLICATE":
             duplicates = data.get("duplicates") or []
             detail = "; ".join(
                 f"{d.get('field')}={d.get('value')} (machine {d.get('machine_code')})" for d in duplicates
-            ) or "(no detail available)"
+            ) or "(không có chi tiết)"
             update_app_settings(
                 registration_status="DUPLICATE",
-                local_status_message=f"Duplicate data: {detail}",
+                local_status_message=f"Dữ liệu bị trùng: {detail}",
                 local_status_updated_at=now,
             )
             self._append_log(f"Duplicate data on registration: {detail}")
@@ -292,10 +306,10 @@ class RegisterWindow(QDialog):
             fields = {"registration_status": "PENDING", "local_status_updated_at": now}
             if data.get("license_activated_at"):
                 fields["license_activated_at"] = data.get("license_activated_at")
-                fields["local_status_message"] = "License activated, waiting for approval."
+                fields["local_status_message"] = "License đã kích hoạt, đang chờ duyệt."
                 self._append_log("License activated — waiting for approval.")
             else:
-                fields["local_status_message"] = "Waiting for license."
+                fields["local_status_message"] = "Đang chờ cấp license."
                 self._append_log("Still waiting for license.")
             update_app_settings(**fields)
         elif code == "MACHINE_REGISTER_APPROVED":
@@ -305,16 +319,16 @@ class RegisterWindow(QDialog):
                 machine_code=machine_code,
                 license_activated_at=data.get("license_activated_at"),
                 local_runtime_status="READY",
-                local_status_message=f"Approved — machine_code={machine_code}.",
+                local_status_message=f"Đã được duyệt — machine_code={machine_code}.",
                 local_status_updated_at=now,
             )
             self._append_log(f"Approved! machine_code={machine_code}")
         elif code == "MACHINE_REGISTER_REJECTED":
-            reason = data.get("rejected_reason") or "(no reason given)"
+            reason = data.get("rejected_reason") or "(không có lý do)"
             update_app_settings(
                 registration_status="REJECTED",
                 local_runtime_status="REJECTED",
-                local_status_message=f"Rejected: {reason}",
+                local_status_message=f"Bị từ chối: {reason}",
                 local_status_updated_at=now,
             )
             self._append_log(f"Request rejected: {reason}")
@@ -328,7 +342,9 @@ class RegisterWindow(QDialog):
     ######################################################################
 
     def _append_log(self, line):
-        self.textEditLog.append(f"[{self._now()}] {line}")
+        full_line = f"[{self._now()}] {line}"
+        log_event(full_line)
+        self.textEditLog.append(full_line)
         doc = self.textEditLog.document()
         if doc.blockCount() > MAX_LOG_LINES:
             cursor = self.textEditLog.textCursor()

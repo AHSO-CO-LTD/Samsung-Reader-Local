@@ -6,7 +6,7 @@
 
 ## 1. Project này là gì
 
-Ứng dụng desktop PyQt5 chạy trên máy tính đặt tại 1 trạm QA trên dây chuyền sản xuất Samsung. Đọc mã vạch/QR từ 3 đầu đọc **Keyence SR-X** (LED BAR 1, LED BAR 2, QRCODE BOTTOM) qua TCP, so khớp cục bộ với PostgreSQL, và đồng bộ với 1 server trung tâm (NestJS) để server theo dõi/tổng hợp dữ liệu QA toàn nhà máy.
+Ứng dụng desktop PyQt5 chạy trên máy tính đặt tại 1 trạm QA trên dây chuyền sản xuất Samsung. Đọc mã vạch/QR từ các đầu đọc **Keyence SR-X** (vai trò LED BAR/QRCODE BOTTOM) qua TCP — và tuỳ chọn thêm 1 máy quét mã vạch cầm tay loại **Keyboard-HID** (giả lập gõ phím, xem mục 10) — so khớp cục bộ với PostgreSQL, và đồng bộ với 1 server trung tâm (NestJS) để server theo dõi/tổng hợp dữ liệu QA toàn nhà máy.
 
 Đây là bản viết lại bằng Python thay cho 1 bản .NET cũ (xem `legacy_dotnet_sdk_approach/` — giữ lại để tham khảo SDK gốc của Keyence, không phải code đang chạy).
 
@@ -16,13 +16,14 @@
 | --- | --- |
 | `main.py` | Entry point — chạy `python main.py` (trong `venv`) hoặc `LocalReaderMonitor.exe` khi đóng gói. Có `_setup_crash_logging()` ghi mọi uncaught exception ra `app_error.log`, và `QLockFile` (`app.lock`) chặn mở 2 instance cùng lúc trên 1 máy (tự phát hiện lock cũ nếu instance trước bị crash) |
 | `app_paths.py` | `get_writable_dir()`/`get_bundle_dir()` — nền tảng path resolution dùng chung, phân biệt file **cần ghi/sửa được** (config JSON, log) với file **chỉ đọc bundle sẵn** (`.ui`, icon, âm thanh, `schema.sql`); tự động đúng cả khi chạy `python main.py` lẫn khi chạy `.exe` đã đóng gói — xem mục 9 |
-| `ui/main_window.py` + `.ui` | Màn hình chính: nhận scan, so khớp OK/NG, gate màn scan theo trạng thái đăng ký/config |
-| `ui/register_window.py` + `.ui` | Dialog đăng ký máy với server (tiếng Anh) |
-| `ui/config_window.py` + `.ui` | Dialog cấu hình reader (thêm/xoá/sửa IP, port) (tiếng Anh) |
+| `app_logger.py` | Logger riêng ghi `log/app_events.log` (xoay theo ngày, giữ 30 ngày) cho sự kiện/thông báo hệ thống — TÁCH BIỆT hoàn toàn với crash logging (`app_error.log`) của `main.py`, không lẫn 2 hệ thống |
+| `ui/main_window.py` + `.ui` | Màn hình chính: nhận scan (TCP + HID, xem mục 10), so khớp OK/NG, gate màn scan theo trạng thái đăng ký/config, banner thông báo tiếng Việt (`labelNotificationBanner`) |
+| `ui/register_window.py` + `.ui` | Dialog đăng ký máy với server (tên nút/tiêu đề tiếng Anh, nhưng label trạng thái/thông báo đã dịch tiếng Việt) |
+| `ui/config_window.py` + `.ui` | Dialog cấu hình reader (thêm/xoá/sửa IP, port) + checkbox bật/tắt máy quét HID (tên nút/tiêu đề tiếng Anh, label trạng thái đã dịch tiếng Việt) |
 | `ui/mapping_window.ui` | Dialog xem danh sách profile/mapping (chỉ hiển thị) |
 | `reader/reader_bridge.py` | `ReaderManager` — quản lý nhiều reader, mỗi reader 1 `QThread` giữ kết nối TCP sống |
 | `reader/SRX_comm.py` | Giao thức tầng thấp nói chuyện với đầu đọc Keyence SR-X |
-| `reader/reader_store.py` | Đọc/ghi danh sách reader đã cấu hình — `readers_config.json` (gốc project, gitignored, riêng từng máy) |
+| `reader/reader_store.py` | Đọc/ghi danh sách reader đã cấu hình — `readers_config.json`, và trạng thái bật/tắt máy quét HID — `hid_scanner_config.json` (cả 2 ở gốc project, gitignored, riêng từng máy) |
 | `data/mapping_store.py` | `load_mappings()` — **đọc DB thật** (`profile_cache`/`profile_led_code_cache`), KHÔNG còn là mock — xem mục 5 |
 | `data/duplicate_key.py` | Tính `duplicate_key` từ mã QR đầy đủ |
 | `db/local_db.py` | Toàn bộ hàm truy cập Postgres — điểm ghi duy nhất cho mọi bảng |
@@ -131,6 +132,8 @@ Chỉ `READY`/`SCANNING`/`SYNCING` (`SCAN_ENABLED_STATUSES` trong `main_window.p
 
 **`readers_config.json`** — danh sách reader đã cấu hình qua dialog Configure, tự sinh khi bấm "Add reader" lần đầu, không cần tạo tay.
 
+**`hid_scanner_config.json`** — trạng thái bật/tắt máy quét mã vạch cầm tay (checkbox trong Config Window), tự sinh khi đổi checkbox lần đầu; không có file thì mặc định coi là BẬT (xem mục 10).
+
 ## 7. Lưu ý quan trọng / cạm bẫy
 
 - **psycopg3 KHÔNG nhận `col IN %s` với tuple** như psycopg2 — lỗi `syntax error at or near "$2"`. Phải dùng `col = ANY(%s)` với **list** Python (không phải tuple). Xem `db/local_db.py:apply_machine_config` để làm ví dụ.
@@ -142,7 +145,7 @@ Chỉ `READY`/`SCANNING`/`SYNCING` (`SCAN_ENABLED_STATUSES` trong `main_window.p
 - **Repo mới có git từ 2026-07-14** (sau khi đã làm xong Bước 1-4) — lịch sử trước đó không có trong git. `.gitignore` loại trừ `venv/`, `__pycache__/`, 3 file cấu hình ở mục 6, `legacy_dotnet_sdk_approach/`.
 - **`register_window.py` tự poll bằng `request_id`, `main_window.py` tự poll `identity/status` bằng `serial+uid`** — 2 cơ chế ĐỘC LẬP, chạy song song, cùng ghi `local_app_settings`. Có thể lệch nhịp vài giây nếu cả 2 cùng chạy (dialog đang mở + app đang chạy nền), nhưng tự đồng bộ lại ở lần poll kế tiếp — không cần khoá chéo.
 - **Không dùng mock server để test** — luôn test với server thật/dev (địa chỉ đổi qua `server_config.json`). Tự tắt mọi instance app đã tự mở để test xong việc.
-- **Quy ước ngôn ngữ**: comment code luôn tiếng Việt (toàn bộ codebase). Text UI: `main_window.py` (màn hình operator) tiếng Việt; `register_window.py`/`config_window.py` (dialog kỹ thuật/admin) tiếng Anh.
+- **Quy ước ngôn ngữ**: comment code luôn tiếng Việt (toàn bộ codebase). Text UI: `main_window.py` (màn hình operator) tiếng Việt. `register_window.py`/`config_window.py` (dialog kỹ thuật/admin): tên nút/tiêu đề group box/tiêu đề cột bảng/QMessageBox giữ tiếng Anh (coi như thuật ngữ kỹ thuật), nhưng **label trạng thái/thông báo** (`STATUS_TEXT`, `STATUS_LABELS`, `local_status_message`, mọi `add_local_notification`) đã dịch tiếng Việt — phạm vi dịch đã chốt, không dịch thêm ngoài nhóm này.
 
 ## 8. Quy ước làm việc đã thống nhất với user
 
@@ -162,3 +165,8 @@ App đóng gói bằng PyInstaller thành `LocalReaderMonitor.exe` (`--onedir`, 
 - **Không dùng `2>&1` khi gọi `psql.exe` (hay bất kỳ native exe nào) trong PowerShell 5.1** — PowerShell bọc từng dòng stderr thành `ErrorRecord`, khiến `$ErrorActionPreference="Stop"` dừng cả script chỉ vì psql in 1 dòng NOTICE (vd `DROP TRIGGER IF EXISTS` báo "does not exist, skipping") chứ không phải lỗi thật. Chỉ dựa vào `$LASTEXITCODE` để biết thành công/thất bại, để stderr in thẳng ra console. Xem `Invoke-Psql` trong `setup.ps1`.
 - **`main.py`'s crash logging phải tự `try/except` quanh phần khởi động (trước `app.exec_()`) và gọi `sys.exit()` tường minh** — nếu chỉ dựa vào `sys.excepthook` mà để exception lọt ra khỏi `main()`, bootloader PyInstaller bản `--windowed` (`runw.exe`) tự hiện thêm hộp thoại "Unhandled exception in script" của riêng nó (native, không phải do code Python), bất kể `sys.excepthook` đã ghi log xong hay chưa. Đã tự verify bằng build thật — ban đầu tưởng lỗi do gọi `sys.__excepthook__` trong hook, nhưng dựng bản build KHÔNG gọi gì thêm sau khi log vẫn bị hộp thoại này, chứng minh nó độc lập với code Python.
 - Chỉ commit khi được yêu cầu rõ ràng.
+- **`QApplication.instance().installEventFilter(self)` + widget con không tiêu thụ phím = Qt PHÁT LẠI CÙNG 1 event object lên từng widget cha (propagate)**, gọi lại `eventFilter()` thêm 1 lần cho MỖI cấp cha — nếu logic bên trong tích luỹ trạng thái (vd nối chuỗi ký tự) mà không tự chặn, sẽ bị nhân bản theo đúng số cấp widget cha (đã tự verify bằng bug thật khi làm máy quét HID mục 10 — 1 ký tự bị lặp 4-5 lần). Dedupe bằng `id(event)` **KHÔNG an toàn** — CPython có thể tái sử dụng đúng địa chỉ bộ nhớ cho các `QKeyEvent` ngắn hạn liên tiếp (kể cả giữa 2 lượt xử lý riêng biệt cách nhau, không chỉ trong 1 lần propagate), khiến sự kiện MỚI bị nhận nhầm trùng sự kiện CŨ và bị bỏ qua hoàn toàn (mất dữ liệu). Cách đúng: **luôn `return True` (nuốt hẳn) ngay khi xử lý xong**, không dựa vào so trùng định danh gì cả.
+
+## 10. Máy quét mã vạch cầm tay (Keyboard-HID)
+
+Nguồn nhập liệu thứ 2 song song với reader TCP — `ui/main_window.py`: `eventFilter()` (bắt phím toàn cục qua `QApplication`, phân biệt máy quét vs người gõ tay bằng tốc độ, `HID_SCAN_MAX_GAP_SEC`), `_detect_hid_scan_role()` (tự suy LED BAR/QRCODE BOTTOM từ nội dung — tiền tố `VN39` cố định = QRCODE BOTTOM, còn lại đều coi là LED BAR, KHÔNG bao giờ bỏ qua mã đã quét được), `_handle_hid_scan()` (tái sử dụng nguyên `on_data_received` pipeline, gán tạm `self._hid_scan_role` thay vì tra `self._reader_roles` — dict đó bị `_sync_reader_panel()` nạp lại từ `readers_config.json` mỗi lần đóng Config Window, sẽ xoá mất entry gán tay cho tên `"HID Scanner"`). Bật/tắt qua checkbox trong Config Window (`hid_scanner_config.json`, xem mục 6), mặc định BẬT. Xem cạm bẫy `eventFilter`/propagate ở mục 7 trước khi sửa phần này.

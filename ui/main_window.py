@@ -179,7 +179,7 @@ NOTIFICATION_SEVERITY_TEXT_COLORS = {
     "_default": "#D8E9E4",  # màu chữ mặc định giống log cũ
 }
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 
 # Mốc dùng lại từ reconcile_pull's take mặc định (server/api_client.py) — doc
 # không cho số cụ thể riêng cho sync/batches/submit.
@@ -287,7 +287,9 @@ READER_SCAN_ERROR_TEXT = "ERROR"
 # Máy quét mã vạch cầm tay (Keyboard-HID, giả lập gõ phím + Enter) — nguồn
 # nhập liệu thứ 2 song song với reader TCP. Không có "reader nào gửi lên" cố
 # định như socket TCP nên phải tự suy role từ NỘI DUNG mỗi lần quét — xem
-# _detect_hid_scan_role()/eventFilter().
+# _detect_role_from_content()/eventFilter(). Cùng cơ chế này còn dùng cho
+# reader TCP bật cờ Is Master (chế độ Master/Slave) — xem
+# _is_master_mode_active().
 HID_SCANNER_NAME = "HID Scanner"
 QR_BOTTOM_PREFIX = "VN39"
 HID_SCAN_MAX_GAP_SEC = (
@@ -321,7 +323,9 @@ class MainWindow(QMainWindow):
         # (nguyên nhân chính khiến panel phải bị đẩy khuất màn hình ở
         # 1366x768 — đã tự verify bằng màn hình thật). Tỷ lệ 4:1 xấp xỉ đúng
         # tỷ lệ hiện có ở 1920x1080 (~1520px:400px).
-        self.horizontalLayoutBody.setStretch(0, 3)  # widgetResultContainer (3 cột LED/QR)
+        self.horizontalLayoutBody.setStretch(
+            0, 3
+        )  # widgetResultContainer (3 cột LED/QR)
         self.horizontalLayoutBody.setStretch(1, 1)  # widgetRightPanel
         self.horizontalLayoutResultColumns.setStretch(0, 1)  # groupBoxLedBar1
         self.horizontalLayoutResultColumns.setStretch(1, 1)  # groupBoxLedBar2
@@ -335,6 +339,12 @@ class MainWindow(QMainWindow):
         self._status = {}
         self._wired_readers = set()
         self._reader_roles = {}
+        # Cờ "Is Master" (chế độ Master/Slave) từng reader — True nghĩa là
+        # reader đó relay CẢ dữ liệu của chính nó lẫn mọi Slave (qua UDP nội
+        # bộ Master/Slave phần cứng), nên phải tự suy role từ nội dung thay
+        # vì tin theo self._reader_roles cố định — xem
+        # _is_master_mode_active()/on_data_received().
+        self._reader_is_master = {}
         # Máy quét HID cầm tay — không tra self._reader_roles (dict đó bị
         # _sync_reader_panel() nạp lại hoàn toàn từ readers_config.json mỗi
         # lần đóng Config Window, sẽ xoá mất entry gán tay cho tên này).
@@ -1580,6 +1590,7 @@ class MainWindow(QMainWindow):
             self._reader_roles[entry["name"]] = entry.get(
                 "role"
             ) or infer_role_from_name(entry["name"])
+            self._reader_is_master[entry["name"]] = entry.get("is_master", False)
             self._wire_reader(reader)
             reader.start()
         self._rebuild_reader_table()
@@ -1607,6 +1618,11 @@ class MainWindow(QMainWindow):
         # đóng modal), lọc theo reader còn tồn tại.
         self._reader_roles = {
             e["name"]: e.get("role") or infer_role_from_name(e["name"])
+            for e in load_readers()
+            if e["name"] in current_names
+        }
+        self._reader_is_master = {
+            e["name"]: e.get("is_master", False)
             for e in load_readers()
             if e["name"] in current_names
         }
@@ -1723,22 +1739,35 @@ class MainWindow(QMainWindow):
             return False
         return super().eventFilter(obj, event)
 
-    def _detect_hid_scan_role(self, text):
-        """Máy quét HID không có 'reader nào gửi lên' cố định như TCP — tự
-        suy role từ NỘI DUNG mỗi lần quét: QRCODE BOTTOM luôn có tiền tố
-        VN39; MỌI mã khác đều coi là LED BAR (kể cả không khớp độ dài/suffix
-        nào — để _classify_led_bar tự đánh dấu NG qua
-        _pick_fallback_led_column(), VẪN hiển thị lên màn hình, không âm
-        thầm bỏ qua khiến operator tưởng nhầm máy quét không hoạt động)."""
+    def _detect_role_from_content(self, text):
+        """Dùng chung cho 2 nguồn KHÔNG có 'vai trò cố định theo reader' —
+        máy quét HID (1 nguồn duy nhất, quét lẫn lộn mọi loại mã) VÀ reader
+        TCP bật cờ Is Master (gộp dữ liệu của chính nó lẫn mọi Slave qua UDP
+        nội bộ Master/Slave của phần cứng, trả về qua 1 luồng TCP duy nhất —
+        xem _is_master_mode_active()). Tự suy vai trò từ NỘI DUNG mỗi lần
+        nhận: QRCODE BOTTOM luôn có tiền tố VN39; MỌI mã khác đều coi là LED
+        BAR (kể cả không khớp độ dài/suffix nào — để _classify_led_bar tự
+        đánh dấu NG qua _pick_fallback_led_column(), VẪN hiển thị lên màn
+        hình, không âm thầm bỏ qua)."""
         return ROLE_QR_BOTTOM if text.startswith(QR_BOTTOM_PREFIX) else ROLE_LED_BAR
 
     def _handle_hid_scan(self, text):
-        self._hid_scan_role = self._detect_hid_scan_role(text)
+        self._hid_scan_role = self._detect_role_from_content(text)
         self.on_data_received(HID_SCANNER_NAME, text)
 
     ######################################################################
     # Nhận dữ liệu / trạng thái từ reader (chạy trên GUI thread nhờ signal)
     ######################################################################
+
+    def _is_master_mode_active(self):
+        """True nếu có ÍT NHẤT 1 reader đang bật cờ Is Master — khi đó toàn
+        bộ app chuyển sang chế độ Master: CHỈ xử lý dữ liệu từ (các) reader
+        Master, bỏ qua dữ liệu từ mọi reader KHÔNG bật cờ này (Slave) để
+        tránh đếm trùng (Master đã relay đủ dữ liệu Slave qua UDP nội bộ
+        Master/Slave phần cứng rồi). KHÔNG cache — tính lại mỗi lần gọi (rẻ,
+        luôn khớp đúng self._reader_is_master hiện tại, không lo lệch pha
+        sau khi Config Window thêm/xoá/đổi cấu hình reader)."""
+        return any(self._reader_is_master.values())
 
     def on_data_received(self, name, text):
         if self._scan_blocked:
@@ -1753,16 +1782,36 @@ class MainWindow(QMainWindow):
 
         self._update_reader_input(name, text)
 
+        if (
+            name != HID_SCANNER_NAME
+            and self._is_master_mode_active()
+            and not self._reader_is_master.get(name)
+        ):
+            # Đang ở chế độ Master (có >=1 reader bật Is Master) — bỏ qua dữ
+            # liệu từ reader KHÔNG phải Master (Slave) để tránh đếm trùng:
+            # Master đã relay đủ dữ liệu này rồi. Vẫn ghi log input ở trên
+            # (_update_reader_input) để kỹ thuật viên thấy Slave vẫn đang
+            # nhận được dữ liệu bình thường, chỉ không đưa vào pipeline so
+            # khớp.
+            self._append_log(
+                f"[{self._now()}] [{name}] Bỏ qua (đang ở chế độ Master, tránh trùng dữ liệu)"
+            )
+            return
+
         is_ok = None
         code = None
         entry = self._current_entry()
-        # HID Scanner không tra self._reader_roles — role đã được
-        # _handle_hid_scan() tự suy từ nội dung ngay trước lời gọi này.
-        role = (
-            self._hid_scan_role
-            if name == HID_SCANNER_NAME
-            else self._reader_roles.get(name)
-        )
+        if name == HID_SCANNER_NAME:
+            # HID Scanner không tra self._reader_roles — role đã được
+            # _handle_hid_scan() tự suy từ nội dung ngay trước lời gọi này.
+            role = self._hid_scan_role
+        elif self._reader_is_master.get(name):
+            # Reader bật Is Master relay CẢ dữ liệu của chính nó lẫn mọi
+            # Slave qua 1 luồng TCP duy nhất — không còn tin được vào
+            # self._reader_roles cố định nữa, tự suy như máy quét HID.
+            role = self._detect_role_from_content(text)
+        else:
+            role = self._reader_roles.get(name)
         if role == ROLE_LED_BAR:
             if text == READER_SCAN_ERROR_TEXT:
                 # Reader báo lỗi đọc rõ ràng — không chạy qua so khớp độ dài/

@@ -38,6 +38,10 @@ def load_readers(path=DEFAULT_STORE_PATH):
         readers = json.load(f)
     for entry in readers:
         entry.setdefault("role", infer_role_from_name(entry.get("name", "")))
+        # Entry cũ (trước khi có tính năng Master/Slave) mặc định KHÔNG phải
+        # Master — xem ui/main_window.py: _is_master_mode_active()/
+        # _detect_role_from_content().
+        entry.setdefault("is_master", False)
     return readers
 
 

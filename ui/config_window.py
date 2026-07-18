@@ -4,7 +4,7 @@ from datetime import datetime
 from PyQt5 import uic
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import QDialog, QMessageBox, QTableWidgetItem
+from PyQt5.QtWidgets import QCheckBox, QDialog, QMessageBox, QTableWidgetItem
 
 from app_logger import log_event
 from reader.reader_store import (
@@ -42,6 +42,7 @@ class ConfigWindow(QDialog):
         self.manager = manager
         self._status = {}
         self._roles = {e["name"]: e.get("role") or infer_role_from_name(e["name"]) for e in load_readers()}
+        self._is_master = {e["name"]: e.get("is_master", False) for e in load_readers()}
 
         self.tableWidgetReaders.horizontalHeader().setStretchLastSection(True)
         self.tableWidgetReaders.setColumnWidth(0, 110)
@@ -49,6 +50,7 @@ class ConfigWindow(QDialog):
         self.tableWidgetReaders.setColumnWidth(2, 120)
         self.tableWidgetReaders.setColumnWidth(3, 80)
         self.tableWidgetReaders.setColumnWidth(4, 100)
+        self.tableWidgetReaders.setColumnWidth(5, 60)
         self.splitter.setSizes([450, 150])
 
         self.pushButtonAddReader.clicked.connect(self.on_add_reader)
@@ -117,6 +119,10 @@ class ConfigWindow(QDialog):
         reader.statusChanged.connect(self.on_status_changed)
 
         self._roles[name] = role
+        # Is Master mặc định tắt lúc thêm mới — bật/tắt sau đó qua checkbox
+        # ngay trên dòng của reader trong bảng (xem _add_table_row), đổi
+        # được bất kỳ lúc nào trong lúc chạy, không cần xoá/thêm lại.
+        self._is_master.setdefault(name, False)
         self._status[name] = {"data": "disconnected", "command": "disconnected"}
         self._add_table_row(reader)
 
@@ -153,6 +159,7 @@ class ConfigWindow(QDialog):
 
         self._status.pop(name, None)
         self._roles.pop(name, None)
+        self._is_master.pop(name, None)
         self._persist()
         self._update_test_buttons()
         self._refresh_role_combo()
@@ -191,7 +198,7 @@ class ConfigWindow(QDialog):
 
         row = self._find_row(name)
         if row is not None:
-            item = self.tableWidgetReaders.item(row, 5)
+            item = self.tableWidgetReaders.item(row, 6)
             item.setText(self._status_line(name))
             item.setForeground(STATUS_COLORS.get(self._status.get(name, {}).get("data"), QColor("black")))
 
@@ -226,6 +233,14 @@ class ConfigWindow(QDialog):
         # Tự lưu ngay khi đổi — không cần nút Save riêng, giống các thay đổi
         # khác trong dialog này (Add/Remove reader tự _persist() ngay).
         save_hid_scanner_enabled(checked)
+
+    def on_master_checkbox_toggled(self, name, checked):
+        # Đổi được bất kỳ lúc nào trong lúc chạy — KHÔNG cần xoá/thêm lại
+        # reader như Role/IP/Port (những cái đó chỉ chọn được lúc thêm mới).
+        # Tự lưu ngay, MainWindow đọc lại giá trị mới khi dialog này đóng
+        # (_sync_reader_panel(), xem ui/main_window.py).
+        self._is_master[name] = checked
+        self._persist()
 
     def _compute_full_name(self):
         """Trả về (full_name, role) theo Role đang chọn. LED BAR: ghép
@@ -287,7 +302,18 @@ class ConfigWindow(QDialog):
         self.tableWidgetReaders.setItem(row, 4, QTableWidgetItem(
             str(reader.command_port) if reader.has_command_channel() else "-"
         ))
-        self.tableWidgetReaders.setItem(row, 5, QTableWidgetItem(self._status_line(reader.name)))
+
+        # Checkbox Is Master NGAY TRÊN DÒNG — đổi được bất kỳ lúc nào trong
+        # lúc chạy (không cần xoá/thêm lại reader như Role/IP/Port, vốn chỉ
+        # chọn được lúc thêm mới). Toggle tự lưu ngay, giống checkBoxHidScanner.
+        checkbox_master = QCheckBox()
+        checkbox_master.setChecked(self._is_master.get(reader.name, False))
+        checkbox_master.toggled.connect(
+            lambda checked, name=reader.name: self.on_master_checkbox_toggled(name, checked)
+        )
+        self.tableWidgetReaders.setCellWidget(row, 5, checkbox_master)
+
+        self.tableWidgetReaders.setItem(row, 6, QTableWidgetItem(self._status_line(reader.name)))
 
     def _selected_name(self):
         items = self.tableWidgetReaders.selectedItems()
@@ -343,6 +369,7 @@ class ConfigWindow(QDialog):
                 "data_port": r.data_port,
                 "command_port": r.command_port if r.has_command_channel() else None,
                 "role": self._roles.get(r.name) or infer_role_from_name(r.name),
+                "is_master": self._is_master.get(r.name, False),
             })
         save_readers(data)
 

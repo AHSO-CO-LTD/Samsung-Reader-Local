@@ -44,11 +44,11 @@ class ConfigWindow(QDialog):
         self._roles = {e["name"]: e.get("role") or infer_role_from_name(e["name"]) for e in load_readers()}
 
         self.tableWidgetReaders.horizontalHeader().setStretchLastSection(True)
-        self.tableWidgetReaders.setColumnWidth(0, 130)
-        self.tableWidgetReaders.setColumnWidth(1, 110)
-        self.tableWidgetReaders.setColumnWidth(2, 130)
-        self.tableWidgetReaders.setColumnWidth(3, 90)
-        self.tableWidgetReaders.setColumnWidth(4, 120)
+        self.tableWidgetReaders.setColumnWidth(0, 110)
+        self.tableWidgetReaders.setColumnWidth(1, 90)
+        self.tableWidgetReaders.setColumnWidth(2, 120)
+        self.tableWidgetReaders.setColumnWidth(3, 80)
+        self.tableWidgetReaders.setColumnWidth(4, 100)
         self.splitter.setSizes([450, 150])
 
         self.pushButtonAddReader.clicked.connect(self.on_add_reader)

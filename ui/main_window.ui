@@ -534,7 +534,7 @@ QToolTip {
                  <widget class="QSpinBox" name="spinBoxLedBar1Count">
                   <property name="minimumSize">
                    <size>
-                    <width>170</width>
+                    <width>145</width>
                     <height>42</height>
                    </size>
                   </property>
@@ -613,7 +613,7 @@ QToolTip {
                  <widget class="QSpinBox" name="spinBoxLedBar2Count">
                   <property name="minimumSize">
                    <size>
-                    <width>170</width>
+                    <width>145</width>
                     <height>42</height>
                    </size>
                   </property>
@@ -692,7 +692,7 @@ QToolTip {
                  <widget class="QSpinBox" name="spinBoxQrBottomCount">
                   <property name="minimumSize">
                    <size>
-                    <width>170</width>
+                    <width>145</width>
                     <height>42</height>
                    </size>
                   </property>
@@ -761,16 +761,15 @@ QToolTip {
        <widget class="QWidget" name="widgetRightPanel" native="true">
         <property name="minimumSize">
          <size>
-          <width>400</width>
+          <width>380</width>
           <height>0</height>
          </size>
         </property>
-        <property name="maximumSize">
-         <size>
-          <width>480</width>
-          <height>16777215</height>
-         </size>
-        </property>
+        <!-- Không đặt maximumSize width nữa (trước là 480) — cap cứng sẽ
+             chặn hẳn việc giãn tỷ lệ ở màn lớn (2K/4K), mâu thuẫn với
+             stretch factor đặt trong main_window.py:__init__. 380 (từ 320,
+             400 gốc) — 320 vẫn bị cắt "Change Server IP" ở 1366px khi test
+             thật, cần thêm biên độ cho hàng Server status + nút đó. -->
         <layout class="QVBoxLayout" name="verticalLayoutRight">
          <property name="leftMargin">
           <number>0</number>

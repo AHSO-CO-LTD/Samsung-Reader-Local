@@ -4,7 +4,7 @@ import sys
 import traceback
 from logging.handlers import RotatingFileHandler
 
-from PyQt5.QtCore import QLockFile
+from PyQt5.QtCore import QLockFile, Qt
 from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
@@ -49,6 +49,13 @@ def _setup_crash_logging():
 
 def main():
     _setup_crash_logging()
+
+    # Qt >=5.14 (đang dùng PyQt5 5.15.11) đã tự bật AA_EnableHighDpiScaling
+    # mặc định — không cần set lại. 2 dòng dưới đây chỉ giảm mờ/lệch khi màn
+    # hình dùng tỷ lệ scale lẻ (125%/150% phổ biến trên laptop) — PHẢI đặt
+    # TRƯỚC khi tạo QApplication.
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
     app = QApplication(sys.argv)
     app.setApplicationName("Local Reader Monitor")

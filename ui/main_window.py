@@ -315,6 +315,22 @@ class MainWindow(QMainWindow):
         uic.loadUi(UI_PATH, self)
         self.setStyleSheet(self.styleSheet() + ARROW_ICONS_STYLESHEET)
 
+        # Giãn đều theo tỷ lệ khi cửa sổ lớn/nhỏ hơn 1920x1080 thiết kế gốc —
+        # mặc định .ui KHÔNG có stretch factor nào nên Qt không biết phân
+        # phối lại khoảng trống dư/thiếu, chỉ dựa vào sizePolicy/floor cứng
+        # (nguyên nhân chính khiến panel phải bị đẩy khuất màn hình ở
+        # 1366x768 — đã tự verify bằng màn hình thật). Tỷ lệ 4:1 xấp xỉ đúng
+        # tỷ lệ hiện có ở 1920x1080 (~1520px:400px).
+        self.horizontalLayoutBody.setStretch(0, 3)  # widgetResultContainer (3 cột LED/QR)
+        self.horizontalLayoutBody.setStretch(1, 1)  # widgetRightPanel
+        self.horizontalLayoutResultColumns.setStretch(0, 1)  # groupBoxLedBar1
+        self.horizontalLayoutResultColumns.setStretch(1, 1)  # groupBoxLedBar2
+        self.horizontalLayoutResultColumns.setStretch(2, 1)  # groupBoxQrBottom
+        # Ngưỡng tối thiểu an toàn — phòng khi cửa sổ bị resize tay xuống
+        # dưới phạm vi đã hỗ trợ (1366x768 trở lên); showMaximized() vẫn
+        # luôn lấp đầy màn hình thật trước, đây chỉ là lưới an toàn.
+        self.setMinimumSize(1280, 720)
+
         self.manager = ReaderManager()
         self._status = {}
         self._wired_readers = set()
@@ -419,8 +435,8 @@ class MainWindow(QMainWindow):
         }
 
         self.tableWidgetReaderStatus.horizontalHeader().setStretchLastSection(True)
-        self.tableWidgetReaderStatus.setColumnWidth(0, 95)
-        self.tableWidgetReaderStatus.setColumnWidth(1, 100)
+        self.tableWidgetReaderStatus.setColumnWidth(0, 80)
+        self.tableWidgetReaderStatus.setColumnWidth(1, 90)
 
         for widgets in self._column_widgets.values():
             widgets["list"].setSpacing(6)

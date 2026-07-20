@@ -15,12 +15,13 @@ from datetime import datetime, timedelta
 import psycopg
 
 from app_logger import log_event
-from app_paths import get_bundle_dir, get_writable_dir
+from app_paths import get_bundle_dir, get_config_dir
 
-# local_db_config.json chứa mật khẩu, user tự sửa được — nằm cạnh .exe thật
-# (get_writable_dir()), KHÔNG phải trong _internal/. schema.sql chỉ đọc, do
-# PyInstaller bundle sẵn — vẫn ở get_bundle_dir() như mọi file .ui/icon khác.
-CONFIG_PATH = os.path.join(get_writable_dir(), "local_db_config.json")
+# local_db_config.json chứa mật khẩu, user tự sửa được — nằm trong thư mục
+# config/ cạnh .exe thật (get_config_dir()), KHÔNG phải trong _internal/.
+# schema.sql chỉ đọc, do PyInstaller bundle sẵn — vẫn ở get_bundle_dir() như
+# mọi file .ui/icon khác.
+CONFIG_PATH = os.path.join(get_config_dir(), "local_db_config.json")
 SCHEMA_PATH = os.path.join(get_bundle_dir(), "db", "schema.sql")
 
 # Số ngày lùi lại (ngoài hôm nay) khi kiểm tra độc nhất. 0 = chỉ hôm nay,

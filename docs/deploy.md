@@ -6,7 +6,7 @@ Hướng dẫn cài đặt cho người lắp đặt máy tại chỗ (máy prod
 
 1. Tải bản release mới nhất từ GitHub (file `.zip`) → giải nén ra 1 thư mục bất kỳ trên máy (ví dụ `C:\LocalReaderMonitor`).
 2. Trong thư mục vừa giải nén, chuột phải `setup.ps1` → **Run with PowerShell** (hoặc mở PowerShell tại thư mục đó, chạy `.\setup.ps1`).
-   - Script tự kiểm tra và cài PostgreSQL nếu máy chưa có, tạo role/database/schema, và sinh `local_db_config.json` cạnh `LocalReaderMonitor.exe`.
+   - Script tự kiểm tra và cài PostgreSQL nếu máy chưa có, tạo role/database/schema, và sinh `local_db_config.json` trong thư mục `config\` cạnh `LocalReaderMonitor.exe` (cùng chỗ với `server_config.json`/`readers_config.json`/`hid_scanner_config.json` — mọi file cấu hình riêng máy đều gộp chung 1 thư mục này).
    - Cài PostgreSQL tự động thử theo thứ tự: (1) tải trực tiếp bằng `Invoke-WebRequest` (tự dùng proxy hệ thống nếu mạng nhà máy có cấu hình proxy — đường tải chính, đáng tin cậy hơn winget trên mạng công ty), (2) fallback qua `winget` nếu tải trực tiếp thất bại, (3) nếu cả 2 đều thất bại thì dừng lại và in hướng dẫn cài PostgreSQL thủ công (kèm mật khẩu cần đặt) — cài xong thì chạy lại `setup.ps1`.
    - Script chạy lại được nhiều lần một cách an toàn (không tạo trùng, không ghi đè cấu hình đã có) — nếu có lỗi giữa chừng, chạy lại `setup.ps1` là đủ.
    - Cửa sổ PowerShell **luôn dừng lại chờ nhấn Enter** trước khi đóng (dù thành công hay lỗi) — không còn tự tắt ngay khiến không kịp đọc thông báo.

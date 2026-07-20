@@ -9,8 +9,9 @@ from PyQt5.QtWidgets import QCheckBox, QDialog, QMessageBox, QTableWidgetItem
 from app_logger import log_event
 from reader.reader_store import (
     LED_BAR_NAME_PREFIX, QR_BOTTOM_NAME, ROLE_DISPLAY_LABELS, ROLE_LED_BAR,
-    ROLE_QR_BOTTOM, infer_role_from_name, load_hid_scanner_enabled, load_readers,
-    save_hid_scanner_enabled, save_readers,
+    ROLE_QR_BOTTOM, infer_role_from_name, load_hid_scanner_enabled,
+    load_master_fill_timeout_seconds, load_readers, save_hid_scanner_enabled,
+    save_master_fill_timeout_seconds, save_readers,
 )
 from app_paths import get_bundle_dir
 
@@ -42,7 +43,11 @@ class ConfigWindow(QDialog):
         self.manager = manager
         self._status = {}
         self._roles = {e["name"]: e.get("role") or infer_role_from_name(e["name"]) for e in load_readers()}
-        self._is_master = {e["name"]: e.get("is_master", False) for e in load_readers()}
+        # Is Master KHÔNG dùng dict riêng ở đây — đọc/ghi trực tiếp lên
+        # reader.is_master (reader/reader_bridge.py:SRXReaderQt), chia sẻ
+        # NGAY LẬP TỨC với MainWindow qua cùng self.manager. Dict riêng
+        # (bản cũ) từng gây bug thật: tick Master lúc dialog đang mở, có dữ
+        # liệu Slave tới đúng lúc đó thì MainWindow vẫn thấy giá trị cũ.
 
         self.tableWidgetReaders.horizontalHeader().setStretchLastSection(True)
         self.tableWidgetReaders.setColumnWidth(0, 110)
@@ -65,6 +70,9 @@ class ConfigWindow(QDialog):
 
         self.checkBoxHidScanner.setChecked(load_hid_scanner_enabled())
         self.checkBoxHidScanner.toggled.connect(self.on_hid_scanner_toggled)
+
+        self.doubleSpinBoxMasterFillTimeout.setValue(load_master_fill_timeout_seconds())
+        self.doubleSpinBoxMasterFillTimeout.valueChanged.connect(self.on_master_fill_timeout_changed)
 
         for name in self.manager.names():
             self._add_row_for_existing_reader(name)
@@ -119,10 +127,10 @@ class ConfigWindow(QDialog):
         reader.statusChanged.connect(self.on_status_changed)
 
         self._roles[name] = role
-        # Is Master mặc định tắt lúc thêm mới — bật/tắt sau đó qua checkbox
-        # ngay trên dòng của reader trong bảng (xem _add_table_row), đổi
-        # được bất kỳ lúc nào trong lúc chạy, không cần xoá/thêm lại.
-        self._is_master.setdefault(name, False)
+        # is_master mặc định False (đặt sẵn trong SRXReaderQt.__init__) — bật
+        # sau đó qua checkbox ngay trên dòng của reader trong bảng (xem
+        # _add_table_row), đổi được bất kỳ lúc nào trong lúc chạy, không cần
+        # xoá/thêm lại.
         self._status[name] = {"data": "disconnected", "command": "disconnected"}
         self._add_table_row(reader)
 
@@ -159,7 +167,6 @@ class ConfigWindow(QDialog):
 
         self._status.pop(name, None)
         self._roles.pop(name, None)
-        self._is_master.pop(name, None)
         self._persist()
         self._update_test_buttons()
         self._refresh_role_combo()
@@ -234,12 +241,24 @@ class ConfigWindow(QDialog):
         # khác trong dialog này (Add/Remove reader tự _persist() ngay).
         save_hid_scanner_enabled(checked)
 
+    def on_master_fill_timeout_changed(self, value):
+        # Tự lưu ngay, giống checkBoxHidScanner. MainWindow đọc thẳng từ đĩa
+        # mỗi lần bắt đầu đếm ngược (không cache) — không cần đồng bộ gì
+        # thêm ở đây, xem ui/main_window.py:_on_master_fill_timeout().
+        save_master_fill_timeout_seconds(value)
+
     def on_master_checkbox_toggled(self, name, checked):
         # Đổi được bất kỳ lúc nào trong lúc chạy — KHÔNG cần xoá/thêm lại
         # reader như Role/IP/Port (những cái đó chỉ chọn được lúc thêm mới).
-        # Tự lưu ngay, MainWindow đọc lại giá trị mới khi dialog này đóng
-        # (_sync_reader_panel(), xem ui/main_window.py).
-        self._is_master[name] = checked
+        # Set TRỰC TIẾP lên object reader (chia sẻ với MainWindow qua cùng
+        # self.manager) — MainWindow thấy giá trị mới NGAY LẬP TỨC, không
+        # cần chờ đóng dialog (khác bản cũ dùng dict riêng, từng gây bug
+        # thật: có dữ liệu Slave tới đúng lúc đang tick thì MainWindow vẫn
+        # dùng giá trị cũ). Vẫn tự lưu xuống JSON để nhớ qua lần khởi động
+        # lại app.
+        reader = self.manager.get(name)
+        if reader is not None:
+            reader.is_master = checked
         self._persist()
 
     def _compute_full_name(self):
@@ -307,7 +326,7 @@ class ConfigWindow(QDialog):
         # lúc chạy (không cần xoá/thêm lại reader như Role/IP/Port, vốn chỉ
         # chọn được lúc thêm mới). Toggle tự lưu ngay, giống checkBoxHidScanner.
         checkbox_master = QCheckBox()
-        checkbox_master.setChecked(self._is_master.get(reader.name, False))
+        checkbox_master.setChecked(reader.is_master)
         checkbox_master.toggled.connect(
             lambda checked, name=reader.name: self.on_master_checkbox_toggled(name, checked)
         )
@@ -369,7 +388,7 @@ class ConfigWindow(QDialog):
                 "data_port": r.data_port,
                 "command_port": r.command_port if r.has_command_channel() else None,
                 "role": self._roles.get(r.name) or infer_role_from_name(r.name),
-                "is_master": self._is_master.get(r.name, False),
+                "is_master": r.is_master,
             })
         save_readers(data)
 

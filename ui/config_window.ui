@@ -51,39 +51,68 @@ QSplitter::handle {
    <item>
     <widget class="QGroupBox" name="groupBoxAddReader">
      <property name="title"><string>Add Reader</string></property>
-     <layout class="QFormLayout" name="formLayoutAddReader">
-      <item row="0" column="0"><widget class="QLabel" name="labelRole"><property name="text"><string>Role</string></property></widget></item>
-      <item row="0" column="1">
-       <widget class="QComboBox" name="comboBoxRole">
-        <property name="minimumHeight"><number>30</number></property>
-       </widget>
+     <layout class="QHBoxLayout" name="horizontalLayoutAddReader">
+      <item>
+       <layout class="QVBoxLayout" name="verticalLayoutRoleField">
+        <item><widget class="QLabel" name="labelRole"><property name="text"><string>Role</string></property></widget></item>
+        <item>
+         <widget class="QComboBox" name="comboBoxRole">
+          <property name="minimumHeight"><number>30</number></property>
+         </widget>
+        </item>
+       </layout>
       </item>
-      <item row="1" column="0"><widget class="QLabel" name="labelName"><property name="text"><string>Name</string></property></widget></item>
-      <item row="1" column="1">
-       <widget class="QLineEdit" name="lineEditNameSuffix">
-        <property name="placeholderText"><string>vd: 1, 2, A...</string></property>
-       </widget>
+      <item>
+       <layout class="QVBoxLayout" name="verticalLayoutNameField">
+        <item><widget class="QLabel" name="labelName"><property name="text"><string>Name</string></property></widget></item>
+        <item>
+         <widget class="QLineEdit" name="lineEditNameSuffix">
+          <property name="minimumHeight"><number>30</number></property>
+          <property name="placeholderText"><string>vd: 1, 2, A...</string></property>
+         </widget>
+        </item>
+       </layout>
       </item>
-      <item row="2" column="0"><widget class="QLabel" name="labelIp"><property name="text"><string>IP Address</string></property></widget></item>
-      <item row="2" column="1"><widget class="QLineEdit" name="lineEditIp"><property name="placeholderText"><string>192.168.3.100</string></property></widget></item>
-      <item row="3" column="0"><widget class="QLabel" name="labelDataPort"><property name="text"><string>Data Port</string></property></widget></item>
-      <item row="3" column="1">
-       <widget class="QSpinBox" name="spinBoxDataPort">
-        <property name="minimumHeight"><number>30</number></property>
-        <property name="minimum"><number>1</number></property>
-        <property name="maximum"><number>65535</number></property>
-        <property name="value"><number>9004</number></property>
-       </widget>
+      <item>
+       <layout class="QVBoxLayout" name="verticalLayoutIpField">
+        <item><widget class="QLabel" name="labelIp"><property name="text"><string>IP Address</string></property></widget></item>
+        <item>
+         <widget class="QLineEdit" name="lineEditIp">
+          <property name="minimumHeight"><number>30</number></property>
+          <property name="minimumWidth"><number>140</number></property>
+          <property name="placeholderText"><string>192.168.3.100</string></property>
+         </widget>
+        </item>
+       </layout>
       </item>
-      <item row="4" column="0"><widget class="QLabel" name="labelCommandPort"><property name="text"><string>Command Port</string></property></widget></item>
-      <item row="4" column="1">
-       <widget class="QLineEdit" name="lineEditCommandPort">
-        <property name="placeholderText"><string>Optional - leave empty if not used</string></property>
-       </widget>
+      <item>
+       <layout class="QVBoxLayout" name="verticalLayoutDataPortField">
+        <item><widget class="QLabel" name="labelDataPort"><property name="text"><string>Data Port</string></property></widget></item>
+        <item>
+         <widget class="QSpinBox" name="spinBoxDataPort">
+          <property name="minimumHeight"><number>30</number></property>
+          <property name="minimum"><number>1</number></property>
+          <property name="maximum"><number>65535</number></property>
+          <property name="value"><number>9004</number></property>
+         </widget>
+        </item>
+       </layout>
       </item>
-      <item row="5" column="0" colspan="2">
+      <item>
+       <layout class="QVBoxLayout" name="verticalLayoutCommandPortField">
+        <item><widget class="QLabel" name="labelCommandPort"><property name="text"><string>Command Port</string></property></widget></item>
+        <item>
+         <widget class="QLineEdit" name="lineEditCommandPort">
+          <property name="minimumHeight"><number>30</number></property>
+          <property name="placeholderText"><string>Optional - leave empty if not used</string></property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item alignment="Qt::AlignBottom">
        <widget class="QPushButton" name="pushButtonAddReader">
         <property name="minimumHeight"><number>34</number></property>
+        <property name="minimumWidth"><number>80</number></property>
         <property name="text"><string>Add</string></property>
        </widget>
       </item>
@@ -146,6 +175,21 @@ QSplitter::handle {
       <widget class="QCheckBox" name="checkBoxHidScanner">
        <property name="text"><string>Bật máy quét mã vạch cầm tay (HID)</string></property>
        <property name="checked"><bool>true</bool></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="labelMasterFillTimeout">
+       <property name="text"><string>Timeout điền lỗi (Master, giây):</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QDoubleSpinBox" name="doubleSpinBoxMasterFillTimeout">
+       <property name="minimumHeight"><number>30</number></property>
+       <property name="minimum"><double>0.5</double></property>
+       <property name="maximum"><double>60.0</double></property>
+       <property name="singleStep"><double>0.5</double></property>
+       <property name="decimals"><number>1</number></property>
+       <property name="value"><double>3.0</double></property>
       </widget>
      </item>
      <item>

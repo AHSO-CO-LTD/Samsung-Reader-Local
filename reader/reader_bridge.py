@@ -67,6 +67,16 @@ class SRXReaderQt(QObject):
         self._has_command = command_port is not None
         self._shared = self._has_command and command_port == data_port
 
+        # Cờ "Is Master" (chế độ Master/Slave) — đặt TRỰC TIẾP trên object
+        # reader (không phải dict riêng ở MainWindow/ConfigWindow) để 2 cửa
+        # sổ luôn thấy CÙNG 1 giá trị tức thời, không có độ trễ đồng bộ. Đã
+        # từng dùng 2 dict riêng (MainWindow._reader_is_master/
+        # ConfigWindow._is_master, chỉ đồng bộ lúc đóng Config Window) —
+        # gây bug thật: tick Master trong lúc dialog đang mở, có dữ liệu
+        # Slave tới ĐÚNG lúc đó thì MainWindow vẫn dùng giá trị cũ, nhận
+        # trùng dữ liệu ngẫu nhiên theo thời điểm.
+        self.is_master = False
+
         self._data_worker = _SocketWorker(name, "data", ip, data_port, terminator=terminator, parent=self)
         self._data_worker.dataReceived.connect(lambda n, ch, text: self.dataReceived.emit(n, text))
         self._data_worker.statusChanged.connect(lambda n, ch, status: self.statusChanged.emit(n, "data", status))

@@ -52,6 +52,7 @@ from reader.reader_store import (
     ROLE_QR_BOTTOM,
     infer_role_from_name,
     load_hid_scanner_enabled,
+    load_master_fill_timeout_seconds,
     load_readers,
 )
 from server.api_client import SamsungQrServerClient, ServerApiConfig
@@ -330,6 +331,31 @@ class MainWindow(QMainWindow):
         self.horizontalLayoutResultColumns.setStretch(0, 1)  # groupBoxLedBar1
         self.horizontalLayoutResultColumns.setStretch(1, 1)  # groupBoxLedBar2
         self.horizontalLayoutResultColumns.setStretch(2, 1)  # groupBoxQrBottom
+        # Chassis Rear + Lot No gộp chung 1 hàng (trước đây 2 hàng riêng,
+        # xếp chồng) để nhường chỗ dọc cho khung Result — bị khuất trên màn
+        # phân giải thấp (1360x768, đã tự verify bằng màn hình thật). Chassis
+        # Rear cần rộng hơn (hiển thị mã chassis dài, vd "BN96-58567A") so
+        # với Lot No (chỉ 3 ký tự).
+        self.horizontalLayoutChassisAndLotNo.setStretch(0, 2)  # groupBoxChassisRear
+        self.horizontalLayoutChassisAndLotNo.setStretch(1, 1)  # groupBoxLotNo
+        # groupBoxResult (chữ OK/NG) là mục DUY NHẤT trong verticalLayoutRight
+        # có stretch > 0 — mọi khoảng trống dư (nếu có, vd màn 1920x1080 trở
+        # lên) ưu tiên dồn hết vào đây thay vì bị chia đều/không đáng kể cho
+        # các mục khác theo sizePolicy mặc định (đã tự verify: nếu không có
+        # stretch này, chỉ giảm minimumSize của labelResultStatus để chống
+        # tràn màn thấp sẽ khiến khung Result NHỎ ĐI ngay cả ở 1920x1080 —
+        # 240px xuống còn 196px — dù màn có dư chỗ). labelResultStatus KHÔNG
+        # đặt maximumSize (đã thử giới hạn 250px trước đó — gây khoảng trống
+        # thừa trên/dưới chữ vì groupBoxResult vẫn giãn theo stretch trong khi
+        # label bị chặn trần, user chọn bỏ hẳn trần để label luôn lấp đầy
+        # đúng groupBoxResult, chấp nhận đánh đổi: màn rất lớn (4K...) khung
+        # OK/NG có thể to hơn đáng kể so với 1920x1080).
+        for i in range(self.verticalLayoutRight.count()):
+            item = self.verticalLayoutRight.itemAt(i)
+            widget = item.widget()
+            self.verticalLayoutRight.setStretch(
+                i, 1 if widget is self.groupBoxResult else 0
+            )
         # Ngưỡng tối thiểu an toàn — phòng khi cửa sổ bị resize tay xuống
         # dưới phạm vi đã hỗ trợ (1366x768 trở lên); showMaximized() vẫn
         # luôn lấp đầy màn hình thật trước, đây chỉ là lưới an toàn.
@@ -339,12 +365,10 @@ class MainWindow(QMainWindow):
         self._status = {}
         self._wired_readers = set()
         self._reader_roles = {}
-        # Cờ "Is Master" (chế độ Master/Slave) từng reader — True nghĩa là
-        # reader đó relay CẢ dữ liệu của chính nó lẫn mọi Slave (qua UDP nội
-        # bộ Master/Slave phần cứng), nên phải tự suy role từ nội dung thay
-        # vì tin theo self._reader_roles cố định — xem
-        # _is_master_mode_active()/on_data_received().
-        self._reader_is_master = {}
+        # Cờ "Is Master" (chế độ Master/Slave) — đọc TRỰC TIẾP từ thuộc tính
+        # reader.is_master (reader/reader_bridge.py:SRXReaderQt), KHÔNG dùng
+        # dict riêng ở đây — xem comment tại SRXReaderQt.__init__ lý do (dict
+        # riêng từng gây bug thật: lệch pha đồng bộ giữa MainWindow/ConfigWindow).
         # Máy quét HID cầm tay — không tra self._reader_roles (dict đó bị
         # _sync_reader_panel() nạp lại hoàn toàn từ readers_config.json mỗi
         # lần đóng Config Window, sẽ xoá mất entry gán tay cho tên này).
@@ -525,6 +549,16 @@ class MainWindow(QMainWindow):
         # heartbeat runtime"), tự bật lại khi thoát BLOCKED — xem _apply_runtime_status.
         self._heartbeat_timer = QTimer(self)
         self._heartbeat_timer.timeout.connect(self._send_heartbeat)
+
+        # Timer 1 lần (singleShot) điền lỗi "SCAN_FAILED" cho vị trí Master
+        # relay im lặng (không gửi cả ERROR lẫn dữ liệu thật) khi 1 trạm vật
+        # lý dưới Master đọc lỗi — xem _on_master_fill_timeout()/
+        # on_data_received(). Chỉ có ý nghĩa ở chế độ Master
+        # (_is_master_mode_active()); TCP độc lập mỗi reader đã tự gửi
+        # "ERROR" tường minh nên không cần cơ chế này.
+        self._master_fill_timeout_timer = QTimer(self)
+        self._master_fill_timeout_timer.setSingleShot(True)
+        self._master_fill_timeout_timer.timeout.connect(self._on_master_fill_timeout)
 
         settings = get_app_settings()
         initial_status = settings.get("local_runtime_status") or "BOOTING"
@@ -1590,7 +1624,7 @@ class MainWindow(QMainWindow):
             self._reader_roles[entry["name"]] = entry.get(
                 "role"
             ) or infer_role_from_name(entry["name"])
-            self._reader_is_master[entry["name"]] = entry.get("is_master", False)
+            reader.is_master = entry.get("is_master", False)
             self._wire_reader(reader)
             reader.start()
         self._rebuild_reader_table()
@@ -1621,11 +1655,9 @@ class MainWindow(QMainWindow):
             for e in load_readers()
             if e["name"] in current_names
         }
-        self._reader_is_master = {
-            e["name"]: e.get("is_master", False)
-            for e in load_readers()
-            if e["name"] in current_names
-        }
+        # KHÔNG cần nạp lại is_master ở đây — cờ này sống TRÊN object reader
+        # (reader.is_master), ConfigWindow sửa trực tiếp lên cùng object chia
+        # sẻ qua self.manager nên luôn tức thời, không cần đồng bộ qua JSON.
 
         for stale_name in set(self._status) - current_names:
             self._status.pop(stale_name, None)
@@ -1759,19 +1791,53 @@ class MainWindow(QMainWindow):
     # Nhận dữ liệu / trạng thái từ reader (chạy trên GUI thread nhờ signal)
     ######################################################################
 
+    def _reader_is_master(self, name):
+        """Đọc cờ Is Master TRỰC TIẾP từ object reader (reader.is_master) —
+        KHÔNG qua dict riêng (đã bỏ, từng gây bug thật: lệch pha đồng bộ
+        giữa MainWindow/ConfigWindow khi tick Master lúc dialog đang mở)."""
+        reader = self.manager.get(name)
+        return bool(reader and reader.is_master)
+
     def _is_master_mode_active(self):
         """True nếu có ÍT NHẤT 1 reader đang bật cờ Is Master — khi đó toàn
         bộ app chuyển sang chế độ Master: CHỈ xử lý dữ liệu từ (các) reader
         Master, bỏ qua dữ liệu từ mọi reader KHÔNG bật cờ này (Slave) để
         tránh đếm trùng (Master đã relay đủ dữ liệu Slave qua UDP nội bộ
         Master/Slave phần cứng rồi). KHÔNG cache — tính lại mỗi lần gọi (rẻ,
-        luôn khớp đúng self._reader_is_master hiện tại, không lo lệch pha
-        sau khi Config Window thêm/xoá/đổi cấu hình reader)."""
-        return any(self._reader_is_master.values())
+        luôn đọc trực tiếp từ object reader, không lo lệch pha sau khi
+        Config Window thêm/xoá/đổi cấu hình reader)."""
+        return any(self._reader_is_master(n) for n in self.manager.names())
 
     def on_data_received(self, name, text):
         if self._scan_blocked:
             return
+
+        if (
+            name != HID_SCANNER_NAME
+            and self._is_master_mode_active()
+            and not self._reader_is_master(name)
+        ):
+            # Đang ở chế độ Master (có >=1 reader bật Is Master) — HOÀN TOÀN
+            # không quan tâm dữ liệu từ reader KHÔNG phải Master (Slave):
+            # dừng NGAY dòng đầu tiên của hàm, TRƯỚC MỌI xử lý khác (kể cả
+            # _update_reader_input hiển thị chẩn đoán bên dưới — Slave vẫn
+            # còn kết nối TCP thật, nhưng cột Input trên bảng Reader sẽ
+            # KHÔNG cập nhật nữa trong lúc đang chế độ Master, đúng nghĩa
+            # "không quan tâm slave"). Đặt thành điều kiện ĐẦU TIÊN (chỉ sau
+            # _scan_blocked) thay vì chỉ "return sớm hơn 1 khối khác" — để
+            # sau này có thêm bao nhiêu bước xử lý mới trong hàm này cũng
+            # không thể vô tình chèn TRƯỚC khối này nữa (không còn "thứ tự"
+            # nào để mà sai). Trước đây từng có bug thật: khối
+            # `_session_pending_clear` ("có mã mới thì xoá kết quả phiên
+            # trước") nằm trước khối này, khiến bản dữ liệu trùng từ Slave
+            # (tới sau Master do đi qua nhiều chặng UDP/TCP hơn) vẫn kịp xoá
+            # mất kết quả OK vừa chốt xong dù chính nó bị lọc bỏ.
+            self._append_log(
+                f"[{self._now()}] [{name}] Bỏ qua (đang ở chế độ Master, tránh trùng dữ liệu)"
+            )
+            return
+
+        self._update_reader_input(name, text)
 
         if self._session_pending_clear:
             self._clear_session()
@@ -1780,24 +1846,6 @@ class MainWindow(QMainWindow):
                 f"[{self._now()}] Sản phẩm mới — tự động xoá kết quả phiên trước."
             )
 
-        self._update_reader_input(name, text)
-
-        if (
-            name != HID_SCANNER_NAME
-            and self._is_master_mode_active()
-            and not self._reader_is_master.get(name)
-        ):
-            # Đang ở chế độ Master (có >=1 reader bật Is Master) — bỏ qua dữ
-            # liệu từ reader KHÔNG phải Master (Slave) để tránh đếm trùng:
-            # Master đã relay đủ dữ liệu này rồi. Vẫn ghi log input ở trên
-            # (_update_reader_input) để kỹ thuật viên thấy Slave vẫn đang
-            # nhận được dữ liệu bình thường, chỉ không đưa vào pipeline so
-            # khớp.
-            self._append_log(
-                f"[{self._now()}] [{name}] Bỏ qua (đang ở chế độ Master, tránh trùng dữ liệu)"
-            )
-            return
-
         is_ok = None
         code = None
         entry = self._current_entry()
@@ -1805,7 +1853,7 @@ class MainWindow(QMainWindow):
             # HID Scanner không tra self._reader_roles — role đã được
             # _handle_hid_scan() tự suy từ nội dung ngay trước lời gọi này.
             role = self._hid_scan_role
-        elif self._reader_is_master.get(name):
+        elif self._reader_is_master(name):
             # Reader bật Is Master relay CẢ dữ liệu của chính nó lẫn mọi
             # Slave qua 1 luồng TCP duy nhất — không còn tin được vào
             # self._reader_roles cố định nữa, tự suy như máy quét HID.
@@ -1864,6 +1912,19 @@ class MainWindow(QMainWindow):
             self._append_log(
                 f"[{self._now()}] [{name}] Đã đủ số lượng ({quota}/{quota})"
             )
+
+        if (
+            name != HID_SCANNER_NAME
+            and self._is_master_mode_active()
+            and sum(self._received_counts.values()) == 1
+        ):
+            # Vừa nhận mã ĐẦU TIÊN của 1 phiên MỚI ở chế độ Master — bắt đầu
+            # đếm ngược 1 lần duy nhất (không reset khi có thêm mã tới trong
+            # lúc đếm, xem _on_master_fill_timeout()). HID Scanner luôn loại
+            # trừ (thao tác tay, tốc độ tuỳ ý).
+            self._master_fill_timeout_timer.stop()
+            timeout_seconds = load_master_fill_timeout_seconds()
+            self._master_fill_timeout_timer.start(int(timeout_seconds * 1000))
 
         if column_key == "qrbottom":
             # Chưa kiểm tra ở đây — chỉ hiển thị trung tính ngay khi nhận
@@ -1956,6 +2017,34 @@ class MainWindow(QMainWindow):
         ):
             return "ledbar2"
         return "ledbar1"
+
+    def _append_scan_failed_item(self, column_key):
+        """Tạo 1 item NG (SCAN_FAILED) cho column_key và cập nhật state
+        phiên — dùng cho _on_master_fill_timeout() điền vị trí Master relay
+        im lặng. KHÔNG kiểm tra quota (caller đảm bảo còn chỗ trống), KHÔNG
+        gọi _update_progress()/_finalize_scan_session() (caller tự làm sau
+        khi điền xong toàn bộ vị trí thiếu). Cố ý KHÔNG dùng chung với nhánh
+        "ERROR" tường minh ở on_data_received: nhánh đó còn phải chạy qua
+        kiểm tra quota/log/lot-no/điều kiện chốt phiên riêng, gộp chung sẽ
+        phải thêm nhiều nhánh rẽ mới cho 1 đoạn code vốn đã chạy đúng."""
+        widgets = self._column_widgets[column_key]
+        item = QListWidgetItem(_wrap_for_display(READER_SCAN_ERROR_TEXT, RESULT_WRAP_CHUNK))
+        item.setTextAlignment(Qt.AlignCenter)
+        _apply_item_result_color(item, RESULT_ITEM_COLORS[False])
+        widgets["list"].addItem(item)
+        self._received_counts[column_key] += 1
+        if column_key == "qrbottom":
+            self._session_qr = {"text": READER_SCAN_ERROR_TEXT, "item": item}
+        else:
+            self._session_led_seq += 1
+            self._session_led_items[column_key].append(
+                {
+                    "text": READER_SCAN_ERROR_TEXT,
+                    "is_ok": False,
+                    "code": NG_SCAN_FAILED,
+                    "seq": self._session_led_seq,
+                }
+            )
 
     def _classify_led_bar(self, text):
         """Xác định code này thuộc cột LED BAR 1 hay 2 — theo NỘI DUNG mã,
@@ -2106,10 +2195,51 @@ class MainWindow(QMainWindow):
     # Gộp 3 reader thành 1 bản ghi scan khi đủ số lượng (progress bar đầy)
     ######################################################################
 
+    def _on_master_fill_timeout(self):
+        """Hết thời gian chờ (chế độ Master) mà phiên vẫn chưa đủ mã — Master
+        relay không gửi gì cho (các) vị trí trạm vật lý đọc lỗi (khác hẳn TCP
+        độc lập, nơi mỗi reader luôn tự gửi "ERROR" tường minh). Điền
+        SCAN_FAILED cho MỌI vị trí còn thiếu rồi tự chốt phiên, không chờ
+        on_data_received (đường total_received>=total_expected ở đó sẽ không
+        bao giờ tới vì im lặng vĩnh viễn, không phải "tới trễ")."""
+        total_expected = sum(w["spin"].value() for w in self._column_widgets.values())
+        total_received = sum(self._received_counts.values())
+        if total_received >= total_expected:
+            # Phiên đã hoàn tất bằng dữ liệu thật ngay trước khi timer kịp
+            # bắn (đua thời gian) — _finalize_scan_session() lẽ ra đã
+            # stop() timer này, nhưng phòng hờ trường hợp không kịp: không
+            # làm gì thêm, tránh điền chồng lên phiên đã chốt.
+            return
+
+        filled_columns = []
+        for column_key in ("ledbar1", "ledbar2", "qrbottom"):
+            widgets = self._column_widgets[column_key]
+            missing = widgets["spin"].value() - self._received_counts[column_key]
+            for _ in range(missing):
+                self._append_scan_failed_item(column_key)
+                filled_columns.append(column_key)
+
+        if not filled_columns:
+            return
+
+        timeout_seconds = load_master_fill_timeout_seconds()
+        self._append_log(
+            f"[{self._now()}] Hết thời gian chờ ({timeout_seconds}s) ở chế độ Master — "
+            f"tự động đánh dấu lỗi cho vị trí chưa nhận được mã: {', '.join(filled_columns)}"
+        )
+        self._update_progress()
+        self._finalize_scan_session()
+
     def _finalize_scan_session(self):
         """Gọi khi tổng số mã đã nhận == tổng Quantity 3 cột (1 sản phẩm đã
         quét xong đủ mọi mảnh). Gộp toàn bộ item đã thu thập trong phiên
         thành 1 dòng local_scan_records + nhiều dòng local_scan_led_items."""
+        # Dừng timer điền lỗi Master (nếu còn đang đếm) — che cả 2 trường
+        # hợp: chốt phiên bình thường (đủ quota thật), VÀ chính
+        # _on_master_fill_timeout() gọi hàm này ở cuối (.stop() trên 1
+        # singleShot QTimer đã bắn rồi là no-op an toàn).
+        self._master_fill_timeout_timer.stop()
+
         qr = self._session_qr
         if qr is None:
             return
@@ -2430,6 +2560,11 @@ class MainWindow(QMainWindow):
     ######################################################################
 
     def _clear_session(self):
+        # Dừng timer điền lỗi Master nếu còn đang đếm dở — tránh bắn muộn
+        # vào phiên MỚI sau khi màn hình đã xoá (vd bấm Reset thủ công giữa
+        # lúc đang chờ), không phải phiên cũ đã bị xoá này.
+        self._master_fill_timeout_timer.stop()
+
         # Tăng generation TRƯỚC khi xoá widget — mọi response submit đang chờ
         # (đã lưu generation cũ trong _pending_scan_ui) sẽ tự biết item của nó
         # không còn an toàn để đụng vào nữa (xem _reflect_scan_submit_ui).

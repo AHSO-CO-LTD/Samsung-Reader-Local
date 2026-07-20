@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 import sys
 import traceback
 from logging.handlers import RotatingFileHandler
@@ -8,11 +9,37 @@ from PyQt5.QtCore import QLockFile, Qt
 from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
-from app_paths import get_bundle_dir, get_writable_dir
+from app_paths import get_bundle_dir, get_config_dir, get_writable_dir
 
 LOGO_PATH = os.path.join(get_bundle_dir(), "ui", "logo", "VISION CENTER LOGOLOGO ICON.ico")
 LOG_PATH = os.path.join(get_writable_dir(), "app_error.log")
 LOCK_PATH = os.path.join(get_writable_dir(), "app.lock")
+
+# Tên file cấu hình từng nằm rải rác ở gốc/cạnh .exe (bản cũ) — nay gộp
+# chung vào thư mục config/ (xem app_paths.get_config_dir()). Máy đã chạy
+# bản cũ cần được tự động di chuyển sang vị trí mới — xem
+# _migrate_legacy_config_files().
+_LEGACY_CONFIG_FILENAMES = (
+    "local_db_config.json",
+    "server_config.json",
+    "readers_config.json",
+    "hid_scanner_config.json",
+    "master_fill_timeout_config.json",
+)
+
+
+def _migrate_legacy_config_files():
+    """Di chuyển file cấu hình từng nằm rải rác ở gốc/cạnh .exe (bản cũ)
+    sang thư mục config/ mới. Idempotent — gọi lại nhiều lần vô hại: bỏ qua
+    file không tồn tại ở vị trí cũ, KHÔNG ghi đè nếu vị trí mới đã có file
+    (không mất cấu hình mới hơn nếu lỡ chạy lại bản cũ sau khi đã migrate)."""
+    old_dir = get_writable_dir()
+    new_dir = get_config_dir()
+    for filename in _LEGACY_CONFIG_FILENAMES:
+        old_path = os.path.join(old_dir, filename)
+        new_path = os.path.join(new_dir, filename)
+        if os.path.exists(old_path) and not os.path.exists(new_path):
+            shutil.move(old_path, new_path)
 
 
 def _setup_crash_logging():
@@ -78,6 +105,8 @@ def main():
         sys.exit(0)
 
     try:
+        _migrate_legacy_config_files()
+
         from ui.main_window import MainWindow  # sau _setup_crash_logging() để bắt được cả lỗi import
 
         window = MainWindow()

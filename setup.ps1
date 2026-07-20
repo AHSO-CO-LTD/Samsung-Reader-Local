@@ -53,7 +53,12 @@ $ErrorActionPreference = "Stop"
 
 $ExeDir = $PSScriptRoot
 $SchemaPath = Join-Path $ExeDir "_internal\db\schema.sql"
-$ConfigPath = Join-Path $ExeDir "local_db_config.json"
+$ConfigDir = Join-Path $ExeDir "config"
+New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
+$ConfigPath = Join-Path $ConfigDir "local_db_config.json"
+# File cũ (bản trước khi gộp mọi config vào thư mục config/) — nếu máy đã
+# từng setup bằng bản setup.ps1 cũ, di chuyển thay vì tạo mới đè mất cấu hình.
+$LegacyConfigPath = Join-Path $ExeDir "local_db_config.json"
 $AppDbSchema = "local_qr"
 
 function Write-Step {
@@ -280,6 +285,9 @@ Write-Step "Writing local_db_config.json..."
 
 if (Test-Path $ConfigPath) {
     Write-Host "local_db_config.json already exists — leaving it untouched."
+} elseif (Test-Path $LegacyConfigPath) {
+    Move-Item $LegacyConfigPath $ConfigPath
+    Write-Host "local_db_config.json migrated from old location (project root) to config/."
 } else {
     $config = [ordered]@{
         host     = "127.0.0.1"

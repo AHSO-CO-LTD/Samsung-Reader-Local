@@ -26,7 +26,7 @@ QMainWindow {
 QWidget#centralwidget {
     background-color: #244B48;
     color: #F3F7F5;
-    font-family: "Segoe UI";
+    font-family: &quot;Segoe UI&quot;;
 }
 
 QWidget#widgetResultContainer {
@@ -392,9 +392,10 @@ QToolTip {
        <widget class="QLabel" name="labelTitle">
         <property name="font">
          <font>
-          <pointsize>22</pointsize>
+          <pointsize>18</pointsize>
           <weight>75</weight>
           <bold>true</bold>
+          <italic>true</italic>
          </font>
         </property>
         <property name="text">
@@ -420,12 +421,13 @@ QToolTip {
         <property name="minimumSize">
          <size>
           <width>120</width>
-          <height>40</height>
+          <height>42</height>
          </size>
         </property>
         <property name="font">
          <font>
-          <pointsize>11</pointsize>
+          <weight>75</weight>
+          <bold>true</bold>
          </font>
         </property>
         <property name="text">
@@ -438,12 +440,13 @@ QToolTip {
         <property name="minimumSize">
          <size>
           <width>120</width>
-          <height>40</height>
+          <height>42</height>
          </size>
         </property>
         <property name="font">
          <font>
-          <pointsize>11</pointsize>
+          <weight>75</weight>
+          <bold>true</bold>
          </font>
         </property>
         <property name="text">
@@ -456,12 +459,13 @@ QToolTip {
         <property name="minimumSize">
          <size>
           <width>150</width>
-          <height>40</height>
+          <height>42</height>
          </size>
         </property>
         <property name="font">
          <font>
-          <pointsize>11</pointsize>
+          <weight>75</weight>
+          <bold>true</bold>
          </font>
         </property>
         <property name="text">
@@ -474,12 +478,13 @@ QToolTip {
         <property name="minimumSize">
          <size>
           <width>150</width>
-          <height>40</height>
+          <height>42</height>
          </size>
         </property>
         <property name="font">
          <font>
-          <pointsize>11</pointsize>
+          <weight>75</weight>
+          <bold>true</bold>
          </font>
         </property>
         <property name="text">
@@ -491,12 +496,31 @@ QToolTip {
     </item>
     <item>
      <widget class="QLabel" name="labelRuntimeBanner">
-      <property name="minimumSize"><size><width>0</width><height>30</height></size></property>
-      <property name="font"><font><pointsize>12</pointsize><bold>true</bold></font></property>
-      <property name="alignment"><set>Qt::AlignCenter</set></property>
-      <property name="wordWrap"><bool>true</bool></property>
-      <property name="visible"><bool>false</bool></property>
-      <property name="text"><string/></property>
+      <property name="minimumSize">
+       <size>
+        <width>0</width>
+        <height>30</height>
+       </size>
+      </property>
+      <property name="font">
+       <font>
+        <pointsize>12</pointsize>
+        <weight>75</weight>
+        <bold>true</bold>
+       </font>
+      </property>
+      <property name="visible">
+       <bool>false</bool>
+      </property>
+      <property name="text">
+       <string/>
+      </property>
+      <property name="alignment">
+       <set>Qt::AlignCenter</set>
+      </property>
+      <property name="wordWrap">
+       <bool>true</bool>
+      </property>
      </widget>
     </item>
     <item>
@@ -534,7 +558,7 @@ QToolTip {
                  <widget class="QSpinBox" name="spinBoxLedBar1Count">
                   <property name="minimumSize">
                    <size>
-                    <width>170</width>
+                    <width>145</width>
                     <height>42</height>
                    </size>
                   </property>
@@ -613,7 +637,7 @@ QToolTip {
                  <widget class="QSpinBox" name="spinBoxLedBar2Count">
                   <property name="minimumSize">
                    <size>
-                    <width>170</width>
+                    <width>145</width>
                     <height>42</height>
                    </size>
                   </property>
@@ -692,7 +716,7 @@ QToolTip {
                  <widget class="QSpinBox" name="spinBoxQrBottomCount">
                   <property name="minimumSize">
                    <size>
-                    <width>170</width>
+                    <width>145</width>
                     <height>42</height>
                    </size>
                   </property>
@@ -761,14 +785,8 @@ QToolTip {
        <widget class="QWidget" name="widgetRightPanel" native="true">
         <property name="minimumSize">
          <size>
-          <width>400</width>
+          <width>380</width>
           <height>0</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>480</width>
-          <height>16777215</height>
          </size>
         </property>
         <layout class="QVBoxLayout" name="verticalLayoutRight">
@@ -785,7 +803,8 @@ QToolTip {
           <widget class="QProgressBar" name="progressBarScan">
            <property name="font">
             <font>
-             <pointsize>11</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
             </font>
            </property>
            <property name="maximum">
@@ -891,7 +910,7 @@ QToolTip {
                 <property name="minimumSize">
                  <size>
                   <width>0</width>
-                  <height>24</height>
+                  <height>28</height>
                  </size>
                 </property>
                 <property name="text">
@@ -905,73 +924,98 @@ QToolTip {
           </widget>
          </item>
          <item>
-          <widget class="QGroupBox" name="groupBoxChassisRear">
-           <property name="font">
-            <font>
-             <pointsize>11</pointsize>
-            </font>
-           </property>
-           <property name="title">
-            <string>Chassis Rear</string>
-           </property>
-           <layout class="QVBoxLayout" name="verticalLayoutChassisRear">
-            <item>
-             <widget class="QComboBox" name="comboBoxChassisRear">
-              <property name="font">
-               <font>
-                <pointsize>12</pointsize>
-               </font>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </widget>
-         </item>
-         <item>
-          <widget class="QGroupBox" name="groupBoxLotNo">
-           <property name="font">
-            <font>
-             <pointsize>11</pointsize>
-            </font>
-           </property>
-           <property name="title">
-            <string>Lot No</string>
-           </property>
-           <layout class="QVBoxLayout" name="verticalLayoutLotNo">
-            <item>
-             <widget class="QLabel" name="labelLotNo">
-              <property name="minimumSize">
-               <size>
-                <width>0</width>
-                <height>44</height>
-               </size>
-              </property>
-              <property name="font">
-               <font>
-                <pointsize>18</pointsize>
-                <weight>75</weight>
-                <bold>true</bold>
-               </font>
-              </property>
-              <property name="text">
-               <string>-</string>
-              </property>
-              <property name="alignment">
-               <set>Qt::AlignCenter</set>
-              </property>
-             </widget>
-            </item>
-           </layout>
-          </widget>
+          <layout class="QHBoxLayout" name="horizontalLayoutChassisAndLotNo">
+           <item>
+            <widget class="QGroupBox" name="groupBoxChassisRear">
+             <property name="font">
+              <font>
+               <pointsize>11</pointsize>
+              </font>
+             </property>
+             <property name="title">
+              <string>Chassis Rear</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayoutChassisRear">
+              <item>
+               <widget class="QComboBox" name="comboBoxChassisRear">
+                <property name="font">
+                 <font>
+                  <pointsize>18</pointsize>
+                  <weight>75</weight>
+                  <bold>true</bold>
+                 </font>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="groupBoxLotNo">
+             <property name="font">
+              <font>
+               <pointsize>11</pointsize>
+              </font>
+             </property>
+             <property name="title">
+              <string>Lot No</string>
+             </property>
+             <layout class="QVBoxLayout" name="verticalLayoutLotNo">
+              <item>
+               <widget class="QLabel" name="labelLotNo">
+                <property name="minimumSize">
+                 <size>
+                  <width>0</width>
+                  <height>44</height>
+                 </size>
+                </property>
+                <property name="font">
+                 <font>
+                  <pointsize>18</pointsize>
+                  <weight>75</weight>
+                  <bold>true</bold>
+                 </font>
+                </property>
+                <property name="text">
+                 <string>-</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
          </item>
          <item>
           <widget class="QLabel" name="labelScanIgnoredWarning">
-           <property name="minimumSize"><size><width>0</width><height>0</height></size></property>
-           <property name="font"><font><pointsize>11</pointsize><bold>true</bold></font></property>
-           <property name="alignment"><set>Qt::AlignCenter</set></property>
-           <property name="wordWrap"><bool>true</bool></property>
-           <property name="visible"><bool>false</bool></property>
-           <property name="text"><string/></property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="font">
+            <font>
+             <pointsize>11</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="visible">
+            <bool>false</bool>
+           </property>
+           <property name="text">
+            <string/>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
           </widget>
          </item>
          <item>
@@ -990,7 +1034,7 @@ QToolTip {
               <property name="minimumSize">
                <size>
                 <width>0</width>
-                <height>240</height>
+                <height>100</height>
                </size>
               </property>
               <property name="font">
@@ -1016,7 +1060,7 @@ QToolTip {
            <property name="minimumSize">
             <size>
              <width>0</width>
-             <height>130</height>
+             <height>90</height>
             </size>
            </property>
            <property name="maximumSize">
@@ -1032,14 +1076,14 @@ QToolTip {
              <bold>true</bold>
             </font>
            </property>
+           <property name="text">
+            <string>Chưa có thông báo.</string>
+           </property>
            <property name="alignment">
             <set>Qt::AlignCenter</set>
            </property>
            <property name="wordWrap">
             <bool>true</bool>
-           </property>
-           <property name="text">
-            <string>Chưa có thông báo.</string>
            </property>
           </widget>
          </item>

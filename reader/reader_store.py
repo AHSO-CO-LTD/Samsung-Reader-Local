@@ -1,9 +1,9 @@
 import json
 import os
 
-from app_paths import get_writable_dir
+from app_paths import get_config_dir
 
-DEFAULT_STORE_PATH = os.path.join(get_writable_dir(), "readers_config.json")
+DEFAULT_STORE_PATH = os.path.join(get_config_dir(), "readers_config.json")
 
 # Vai trò reader — tách khỏi tên (identity). LED_BAR: không giới hạn số
 # lượng, cột hiển thị (ledbar1/ledbar2) xác định qua nội dung mã lúc chạy
@@ -38,6 +38,10 @@ def load_readers(path=DEFAULT_STORE_PATH):
         readers = json.load(f)
     for entry in readers:
         entry.setdefault("role", infer_role_from_name(entry.get("name", "")))
+        # Entry cũ (trước khi có tính năng Master/Slave) mặc định KHÔNG phải
+        # Master — xem ui/main_window.py: _is_master_mode_active()/
+        # _detect_role_from_content().
+        entry.setdefault("is_master", False)
     return readers
 
 
@@ -46,7 +50,7 @@ def save_readers(readers, path=DEFAULT_STORE_PATH):
         json.dump(readers, f, indent=2, ensure_ascii=False)
 
 
-HID_SCANNER_CONFIG_PATH = os.path.join(get_writable_dir(), "hid_scanner_config.json")
+HID_SCANNER_CONFIG_PATH = os.path.join(get_config_dir(), "hid_scanner_config.json")
 
 
 def load_hid_scanner_enabled(path=HID_SCANNER_CONFIG_PATH):
@@ -59,3 +63,24 @@ def load_hid_scanner_enabled(path=HID_SCANNER_CONFIG_PATH):
 def save_hid_scanner_enabled(enabled, path=HID_SCANNER_CONFIG_PATH):
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"enabled": enabled}, f, indent=2)
+
+
+# Chế độ Master relay im lặng (không gửi gì, không cả "ERROR") cho vị trí
+# trạm vật lý đọc lỗi — khác TCP độc lập, nơi mỗi reader luôn tự gửi "ERROR"
+# tường minh. Timeout này (tính từ mã ĐẦU TIÊN của phiên, không reset khi có
+# mã mới tới) cho phép tự điền SCAN_FAILED cho vị trí còn thiếu sau khi hết
+# giờ chờ — xem ui/main_window.py:_on_master_fill_timeout().
+MASTER_FILL_TIMEOUT_CONFIG_PATH = os.path.join(get_config_dir(), "master_fill_timeout_config.json")
+DEFAULT_MASTER_FILL_TIMEOUT_SECONDS = 3.0
+
+
+def load_master_fill_timeout_seconds(path=MASTER_FILL_TIMEOUT_CONFIG_PATH):
+    if not os.path.exists(path):
+        return DEFAULT_MASTER_FILL_TIMEOUT_SECONDS
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f).get("seconds", DEFAULT_MASTER_FILL_TIMEOUT_SECONDS)
+
+
+def save_master_fill_timeout_seconds(seconds, path=MASTER_FILL_TIMEOUT_CONFIG_PATH):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"seconds": seconds}, f, indent=2)

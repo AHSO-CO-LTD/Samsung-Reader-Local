@@ -6,14 +6,11 @@ __pycache__/
 *.pyc
 
 # Cấu hình riêng từng máy — không phải source code, KHÔNG commit
-# (local_db_config.json chứa mật khẩu Postgres). Nằm ở GỐC project (không
-# phải trong db/, server/, reader/ nữa) — xem app_paths.py:get_writable_dir()
-# (đóng gói PyInstaller cần các file này nằm cạnh .exe, không phải rải rác
-# theo cấu trúc thư mục source).
-local_db_config.json
-server_config.json
-readers_config.json
-hid_scanner_config.json
+# (local_db_config.json chứa mật khẩu Postgres). Gộp chung 1 thư mục con
+# config/ cạnh .exe (không phải rải rác theo cấu trúc thư mục source) — xem
+# app_paths.py:get_config_dir(). File cũ ở vị trí rải rác trước đây được tự
+# động di chuyển vào config/ lúc khởi động — xem main.py.
+config/
 
 # Legacy .NET SDK approach
 legacy_dotnet_sdk_approach/

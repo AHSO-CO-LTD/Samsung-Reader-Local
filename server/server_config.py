@@ -8,9 +8,9 @@ xem app_paths.py, đọc lại mỗi lần mở app).
 import json
 import os
 
-from app_paths import get_writable_dir
+from app_paths import get_config_dir
 
-CONFIG_PATH = os.path.join(get_writable_dir(), "server_config.json")
+CONFIG_PATH = os.path.join(get_config_dir(), "server_config.json")
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 3979

@@ -180,7 +180,7 @@ NOTIFICATION_SEVERITY_TEXT_COLORS = {
     "_default": "#D8E9E4",  # màu chữ mặc định giống log cũ
 }
 
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 
 # Mốc dùng lại từ reconcile_pull's take mặc định (server/api_client.py) — doc
 # không cho số cụ thể riêng cho sync/batches/submit.
@@ -2028,7 +2028,9 @@ class MainWindow(QMainWindow):
         kiểm tra quota/log/lot-no/điều kiện chốt phiên riêng, gộp chung sẽ
         phải thêm nhiều nhánh rẽ mới cho 1 đoạn code vốn đã chạy đúng."""
         widgets = self._column_widgets[column_key]
-        item = QListWidgetItem(_wrap_for_display(READER_SCAN_ERROR_TEXT, RESULT_WRAP_CHUNK))
+        item = QListWidgetItem(
+            _wrap_for_display(READER_SCAN_ERROR_TEXT, RESULT_WRAP_CHUNK)
+        )
         item.setTextAlignment(Qt.AlignCenter)
         _apply_item_result_color(item, RESULT_ITEM_COLORS[False])
         widgets["list"].addItem(item)

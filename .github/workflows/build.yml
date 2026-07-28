@@ -25,6 +25,23 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller LocalReaderMonitor.spec --noconfirm
 
+      - name: Verify bundled native dependencies
+        shell: pwsh
+        run: |
+          $internalDir = "dist/LocalReaderMonitor/_internal"
+          $cffiBackend = Get-ChildItem `
+            -LiteralPath $internalDir `
+            -Filter "_cffi_backend*.pyd" `
+            -File
+          if (-not $cffiBackend) {
+            throw "Missing _cffi_backend*.pyd required by PyNaCl."
+          }
+
+          $sodiumPath = Join-Path $internalDir "nacl/_sodium.pyd"
+          if (-not (Test-Path -LiteralPath $sodiumPath -PathType Leaf)) {
+            throw "Missing nacl/_sodium.pyd required by PyNaCl."
+          }
+
       - name: Assemble release package (exe + setup.ps1 side by side)
         shell: pwsh
         run: Copy-Item setup.ps1 dist/LocalReaderMonitor/setup.ps1

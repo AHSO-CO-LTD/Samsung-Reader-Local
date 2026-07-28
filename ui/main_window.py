@@ -187,11 +187,11 @@ NOTIFICATION_SEVERITY_TEXT_COLORS = {
     "_default": "#D8E9E4",  # màu chữ mặc định giống log cũ
 }
 
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.7.1"
 # Ngày PHÁT HÀNH bản build này (không phải hôm nay) — dùng để check cửa sổ
 # update_until của license (xem licensing/license_client.py:verify_license).
 # Cập nhật thủ công mỗi lần release thật, không tự tính date.today().
-APP_RELEASE_DATE = "2026-07-22"
+APP_RELEASE_DATE = ""
 # Mã sản phẩm đối chiếu với lic["product"] khi verify license (check
 # "sai_san_pham") — để None để BỎ QUA check này. Cần thống nhất giá trị thật
 # với bên giữ công cụ ký license nếu họ có gắn "product" vào license phát
@@ -1713,9 +1713,7 @@ class MainWindow(QMainWindow):
         line_edit = combo.lineEdit()
         line_edit.setFont(combo.font())
         line_edit.setPlaceholderText("Nhập để tìm mã Chassis Rear")
-        line_edit.editingFinished.connect(
-            self._finish_chassis_rear_search
-        )
+        line_edit.editingFinished.connect(self._finish_chassis_rear_search)
         self._last_valid_chassis_code = None
         self._finishing_chassis_rear_search = False
 
@@ -2189,9 +2187,7 @@ class MainWindow(QMainWindow):
             self._finalize_scan_session()
 
     def _current_entry(self):
-        code = self._canonical_chassis_code(
-            self.comboBoxChassisRear.currentText()
-        )
+        code = self._canonical_chassis_code(self.comboBoxChassisRear.currentText())
         return self._mappings_by_chassis.get(code)
 
     def _describe_ng(self, code, text, entry):

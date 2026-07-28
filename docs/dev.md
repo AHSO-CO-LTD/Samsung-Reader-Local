@@ -240,4 +240,16 @@ approval và test license thật. Dù bật hay tắt, kết quả license khôn
 
 **`APP_PRODUCT`** (như `APP_VERSION`/`APP_RELEASE_DATE`) sống ở `ui/main_window.py` (không phải file `licensing/` riêng — đã gộp về 1 chỗ cho dễ tìm, cả 3 đều là "cấu hình bắt buộc trước khi build" theo `E:\License-Key-main\INTEGRATION.md` mục 3). `ui/register_window.py` nhận cả 3 giá trị qua tham số constructor (`app_version`/`app_release_date`/`app_product`), không tự import — giống hệt cách `APP_VERSION`/`APP_RELEASE_DATE` đã làm, tránh vòng lặp import với `main_window.py`.
 
-**Dependency mới**: `pynacl` (verify Ed25519) — `LocalReaderMonitor.spec` KHÔNG cần sửa `hiddenimports`, `_pyinstaller_hooks_contrib` đã có sẵn `hook-nacl.py` tự động bundle đúng `nacl/_sodium.pyd` (đã tự verify bằng build `--onedir` thật).
+**Dependency đóng gói của license**: `pynacl` dùng để verify Ed25519 và kéo
+`cffi` theo dependency. `hook-nacl.py` tự gom `nacl/_sodium.pyd` nhưng không
+khai báo extension `_cffi_backend` mà `_sodium.pyd` nạp gián tiếp, vì vậy
+`LocalReaderMonitor.spec` **bắt buộc** có
+`hiddenimports=["_cffi_backend"]`. Thiếu dòng này, bản build trên GitHub runner
+sạch crash ngay lúc startup với `ModuleNotFoundError: No module named
+'_cffi_backend'`.
+
+Build local cũ từng che mất lỗi vì virtual environment tình cờ có thêm
+`cryptography`; hook của package đó kéo `_cffi_backend` vào bundle dù spec để
+`hiddenimports=[]`. Không dùng một venv dev đã cài thừa package để kết luận bản
+CI an toàn. Workflow `.github/workflows/build.yml` phải fail build nếu thiếu
+`_internal/_cffi_backend*.pyd` hoặc `_internal/nacl/_sodium.pyd`.

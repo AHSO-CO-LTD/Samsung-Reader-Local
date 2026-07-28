@@ -26,6 +26,7 @@ Hướng dẫn cài đặt cho người lắp đặt máy tại chỗ (máy prod
 - **Đầu đọc hiện "Mất kết nối"**: kiểm tra IP/port đầu đọc trong "Configure", và cáp mạng/nguồn của đầu đọc vật lý.
 - **Máy quét HID gõ vào ô Chassis Rear**: hoàn tất việc chọn chassis bằng gợi ý/Enter hoặc click ra ngoài để ô tìm kiếm bỏ focus, sau đó quét lại.
 - **Machine/Line/Station hiện sai hoặc `-`**: đây là metadata server trả trong heartbeat, không phải cấu hình local; nhờ admin kiểm tra máy đã được gán đúng line/station rồi chờ lần heartbeat tiếp theo.
+- **`app_error.log` báo thiếu `_cffi_backend` ngay lúc mở EXE**: đây là bản release đóng gói lỗi PyNaCl/CFFI, không liên quan PostgreSQL hay `setup.ps1`. Không chép DLL/PYD thủ công từ máy khác; dùng lại artifact được build từ `LocalReaderMonitor.spec` có `hiddenimports=["_cffi_backend"]`.
 - **App tự đóng không rõ lý do**: xem `app_error.log` cạnh `.exe` — file này ghi lại traceback đầy đủ của lỗi gần nhất.
 - **Tra cứu lịch sử hoạt động (không phải lỗi crash)**: thư mục `log/` cạnh `.exe` chứa file log theo ngày (`app_events.log`, tự xoay vòng, giữ 30 ngày) — ghi lại toàn bộ sự kiện/thông báo hệ thống (kết nối reader, đồng bộ server, kết quả quét...), tách biệt hoàn toàn với `app_error.log`.
 

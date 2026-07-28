@@ -1,12 +1,20 @@
+import json
 import os
 from datetime import datetime
 
 from PyQt5 import uic
 from PyQt5.QtCore import QTimer
-from PyQt5.QtWidgets import QDialog
+from PyQt5.QtWidgets import QApplication, QDialog, QFileDialog
 
 from app_logger import log_event
-from db.local_db import add_local_notification, get_app_settings, get_scan_counts, update_app_settings
+from db.local_db import (
+    add_local_notification,
+    get_app_settings,
+    get_scan_counts,
+    update_app_settings,
+)
+from licensing.messages import describe_why
+from licensing.service import activate_local_license, build_machine_info_export, evaluate_local_license
 from machine.identity import ensure_machine_identity
 from app_paths import get_bundle_dir
 
@@ -15,6 +23,7 @@ UI_PATH = os.path.join(get_bundle_dir(), "ui", "register_window.ui")
 MAX_LOG_LINES = 500
 
 STATUS_POLL_INTERVAL_MS = 12000
+LICENSE_TAB_ENABLED = False
 
 # Riêng biệt với STATUS_POLL_INTERVAL_MS (chỉ chạy khi PENDING_LICENSE/
 # PENDING_APPROVAL) — pending sync cần cập nhật bất kể trạng thái đăng ký gì,
@@ -47,34 +56,58 @@ STATUS_STYLES = {
 # gửi lại mù — luôn phải người dùng bấm nút).
 _RESENDABLE_STATES = ("NOT_REQUESTED", "REJECTED", "DUPLICATE")
 
+LICENSE_STATUS_TEXT = {
+    "active": "Đã kích hoạt",
+    "unactivated": "Chưa kích hoạt",
+    "invalid": "License không hợp lệ",
+}
+
+LICENSE_STATUS_STYLES = {
+    "active": "color: green;",
+    "unactivated": "color: gray;",
+    "invalid": "color: red;",
+}
+
 
 class RegisterWindow(QDialog):
-    """Dialog đăng ký máy với server: gửi POST /api/machines/register-request,
-    tự poll GET /api/machines/register-requests/:request_id/status tới khi
-    APPROVED. Dùng chung server_worker (ServerWorker) với MainWindow — mỗi
-    job_kind tự lọc theo tên, không đụng job "health" của MainWindow."""
+    """Dialog đăng ký máy với server, kèm tab license cục bộ độc lập."""
 
-    def __init__(self, server_worker, on_sync_now=None, on_check_data=None, on_sync_profile=None, parent=None):
+    def __init__(self, server_worker, app_version, app_release_date, app_product=None,
+                 on_sync_now=None, on_check_data=None, on_sync_profile=None, parent=None):
         super().__init__(parent)
         uic.loadUi(UI_PATH, self)
+        self.tabWidgetMain.setTabEnabled(
+            self.tabWidgetMain.indexOf(self.tabLicense), LICENSE_TAB_ENABLED
+        )
 
         self.server_worker = server_worker
         self.server_worker.callSucceeded.connect(self._on_call_succeeded)
         self.server_worker.callFailed.connect(self._on_call_failed)
 
+        self._app_version = app_version
+        self._app_release_date = app_release_date
+        self._app_product = app_product
+
         # Callback do MainWindow truyền vào (thường là
         # lambda: self._maybe_start_sync_batch("MANUAL") /
         # lambda: self._start_reconcile_check(manual=True) /
         # lambda: self._check_machine_config()) — dialog này không tự giữ
-        # state _batch_in_flight/_reconcile_in_flight/_serial/_uid nên không
-        # tự chạy được logic sync/reconcile/config, chỉ chuyển tiếp yêu cầu
-        # về nơi có đủ state (MainWindow).
+        # state _batch_in_flight/_reconcile_in_flight nên không tự chạy được
+        # logic sync/reconcile/config, chỉ chuyển tiếp về MainWindow.
         self._on_sync_now = on_sync_now
         self._on_check_data = on_check_data
         self._on_sync_profile = on_sync_profile
 
+        # Tab Registration.
         self.pushButtonSendRequest.clicked.connect(self.on_send_request_clicked)
         self.pushButtonRefreshStatus.clicked.connect(self.on_refresh_clicked)
+
+        # Tab License.
+        self.pushButtonCopyMachineId.clicked.connect(self.on_copy_machine_id_clicked)
+        self.pushButtonExportMachineInfo.clicked.connect(self.on_export_machine_info_clicked)
+        self.pushButtonActivate.clicked.connect(self.on_activate_clicked)
+
+        # Nút dùng chung.
         self.pushButtonSyncNow.clicked.connect(self.on_sync_now_clicked)
         self.pushButtonCheckData.clicked.connect(self.on_check_data_clicked)
         self.pushButtonSyncProfile.clicked.connect(self.on_sync_profile_clicked)
@@ -103,6 +136,9 @@ class RegisterWindow(QDialog):
         view_state = self._refresh_view()
         if view_state in ("PENDING_LICENSE", "PENDING_APPROVAL"):
             self._poll_status()
+
+        self._loaded_license_once = False
+        self._refresh_license_view()
         self._refresh_pending_sync_label()
 
     ######################################################################
@@ -119,7 +155,7 @@ class RegisterWindow(QDialog):
             self._append_log("Could not read hardware serial/UID for this machine — cannot send a registration request.")
 
     ######################################################################
-    # Hiển thị trạng thái hiện tại (đọc lại từ local_app_settings)
+    # Hiển thị trạng thái đăng ký hiện tại (đọc lại từ local_app_settings)
     ######################################################################
 
     @staticmethod
@@ -211,6 +247,82 @@ class RegisterWindow(QDialog):
         self.server_worker.enqueue(
             "register_status", request_id=str(request_id), serial=self._serial, uid=self._uid,
         )
+
+    ######################################################################
+    # Hiển thị trạng thái license cục bộ, độc lập với registration
+    ######################################################################
+
+    def _refresh_license_view(self):
+        result = evaluate_local_license(self._app_version, self._app_release_date, self._app_product)
+        state = result["state"]
+
+        self.lineEditMachineId.setText(result["machine_id"] or "(unavailable)")
+        self.labelLicenseStatus.setText(LICENSE_STATUS_TEXT.get(state, state))
+        self.labelLicenseStatus.setStyleSheet(LICENSE_STATUS_STYLES.get(state, ""))
+        self.labelLicenseStatusDetail.setText(
+            describe_why(result.get("why")) if state != "active" else ""
+        )
+
+        # Chỉ đổ machine_license_key đã lưu vào ô dán lúc mở dialog LẦN ĐẦU —
+        # tránh ghi đè nội dung user đang gõ dở mỗi lần _refresh_view() chạy
+        # lại (vd sau khi bấm Activate).
+        if not self._loaded_license_once:
+            self._loaded_license_once = True
+            stored = get_app_settings().get("machine_license_key") or ""
+            self.textEditLicenseKey.setPlainText(stored)
+
+        return state
+
+    ######################################################################
+    # Machine ID — copy
+    ######################################################################
+
+    def on_copy_machine_id_clicked(self):
+        QApplication.clipboard().setText(self.lineEditMachineId.text())
+        self._append_log("Đã copy Machine ID vào clipboard.")
+
+    def on_export_machine_info_clicked(self):
+        """Xuất 1 file JSON gói đủ thông tin bên cấp license cần (Machine ID +
+        version/release date/product hiện tại của app) — operator chỉ cần gửi
+        file này, không cần tự đọc/gõ lại Machine ID hay trao đổi thêm gì."""
+        info = build_machine_info_export(self._app_version, self._app_release_date, self._app_product)
+        default_name = f"machine_info_{info['machine_id']}.json"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Xuất thông tin máy", default_name, "JSON Files (*.json)"
+        )
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(info, f, indent=2, ensure_ascii=False)
+        self._append_log(f"Đã xuất file thông tin máy: {path}")
+
+    ######################################################################
+    # Kích hoạt license (offline, không qua server)
+    ######################################################################
+
+    def on_activate_clicked(self):
+        lic_str = self.textEditLicenseKey.toPlainText().strip()
+        if not lic_str:
+            self._append_log("Chưa dán chuỗi license.")
+            return
+
+        self.pushButtonActivate.setEnabled(False)
+        try:
+            result = activate_local_license(lic_str, self._app_version, self._app_release_date, self._app_product)
+        finally:
+            self.pushButtonActivate.setEnabled(True)
+
+        if result["ok"]:
+            self._append_log(f"Kích hoạt thành công — Machine ID={result['machine_id']}.")
+            add_local_notification(
+                "LOCAL_LICENSE_ACTIVATED", "INFO",
+                "Đã kích hoạt license", "Máy đã được kích hoạt license cục bộ (offline).",
+            )
+        else:
+            message = describe_why(result["why"])
+            self._append_log(f"Kích hoạt thất bại: {message}")
+
+        self._refresh_license_view()
 
     ######################################################################
     # Data Sync (POST /api/sync/batches/submit + sync/reconcile/* — logic

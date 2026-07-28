@@ -8,6 +8,8 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtMultimedia import QMediaContent, QMediaPlayer, QMediaPlaylist
 from PyQt5.QtWidgets import (
     QApplication,
+    QComboBox,
+    QCompleter,
     QDialog,
     QInputDialog,
     QLabel,
@@ -15,6 +17,7 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QTableWidgetItem,
+    QWidget,
 )
 
 from app_logger import log_event
@@ -56,6 +59,7 @@ from reader.reader_store import (
     load_readers,
 )
 from server.api_client import SamsungQrServerClient, ServerApiConfig
+from server.runtime_socket_client import MachineRuntimeClient
 from server.server_config import load_server_config, save_server_config
 from server.server_worker import ServerWorker
 from ui.config_window import ConfigWindow
@@ -102,7 +106,8 @@ STATUS_COLORS = {
     "disconnected": QColor("red"),
 }
 
-SERVER_HEALTH_CHECK_INTERVAL_MS = 15000
+SERVER_HEALTH_CHECK_INTERVAL_MS = 5000
+IDENTITY_STATUS_POLL_INTERVAL_MS = 15000
 
 SERVER_STATUS_LABELS = {
     True: "Server: Đã kết nối",
@@ -116,11 +121,13 @@ SERVER_STATUS_STYLES = {
     None: "color: gray;",
 }
 
-IDENTITY_STATUS_POLL_INTERVAL_MS = 15000
-
 # Doc không cho số cụ thể cho commands/poll, chỉ nói "interval thưa hơn"
 # health/identity — 30s là lựa chọn hợp lý, dễ chỉnh sau.
 COMMANDS_POLL_INTERVAL_MS = 30000
+
+# Doc mục 12.1: gửi runtime:snapshot định kỳ mỗi 3-10 giây trong lúc đang
+# chạy — 5s nằm giữa khoảng đó.
+RUNTIME_SNAPSHOT_INTERVAL_MS = 5000
 
 # 4 command_type hợp lệ (đúng ENUM machine_command_type trong db/schema.sql) —
 # command_type nào khác đều bị coi là không hỗ trợ, ack FAILED ngay, không
@@ -180,7 +187,17 @@ NOTIFICATION_SEVERITY_TEXT_COLORS = {
     "_default": "#D8E9E4",  # màu chữ mặc định giống log cũ
 }
 
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.7.0"
+# Ngày PHÁT HÀNH bản build này (không phải hôm nay) — dùng để check cửa sổ
+# update_until của license (xem licensing/license_client.py:verify_license).
+# Cập nhật thủ công mỗi lần release thật, không tự tính date.today().
+APP_RELEASE_DATE = "2026-07-22"
+# Mã sản phẩm đối chiếu với lic["product"] khi verify license (check
+# "sai_san_pham") — để None để BỎ QUA check này. Cần thống nhất giá trị thật
+# với bên giữ công cụ ký license nếu họ có gắn "product" vào license phát
+# hành cho dự án này. Đặt cạnh APP_VERSION/APP_RELEASE_DATE cho dễ tìm — cả 3
+# đều là cấu hình bắt buộc trước khi build (xem E:\License-Key-main\INTEGRATION.md mục 3).
+APP_PRODUCT = "Samsung Reader Local"
 
 # Mốc dùng lại từ reconcile_pull's take mặc định (server/api_client.py) — doc
 # không cho số cụ thể riêng cho sync/batches/submit.
@@ -362,6 +379,23 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1280, 720)
 
         self.manager = ReaderManager()
+
+        # Kênh Socket.IO /machine-runtime (dashboard vận hành server, KHÔNG
+        # phải hồ sơ QA chính thức — đó là scans/submit) — khởi tạo SỚM
+        # (trước dòng nối comboBoxChassisRear.currentTextChanged bên dưới)
+        # vì _load_mappings() (gọi trong __init__, trước _init_server_worker)
+        # tự bắn currentTextChanged ngay khi add item đầu tiên vào combobox
+        # — on_chassis_rear_changed() cần self._runtime_client tồn tại sẵn
+        # lúc đó, không thì AttributeError ngay lúc khởi động app. Xem
+        # server/runtime_socket_client.py, _apply_runtime_status() (điểm
+        # kích hoạt connect+hello+start), closeEvent() (điểm gửi stop).
+        self._runtime_client = MachineRuntimeClient(parent=self)
+        self._runtime_client.runtimeConnected.connect(self._on_runtime_connected)
+        self._runtime_client.runtimeReconnected.connect(self._on_runtime_reconnected)
+        self._runtime_client.runtimeDisconnected.connect(self._on_runtime_disconnected)
+        self._runtime_client.runtimeBlocked.connect(self._on_runtime_blocked)
+        self._runtime_session_started = False
+
         self._status = {}
         self._wired_readers = set()
         self._reader_roles = {}
@@ -432,6 +466,7 @@ class MainWindow(QMainWindow):
         # _heartbeat_timer khi thoát BLOCKED hay chưa (chưa từng bắt đầu thì
         # không tự bật, tránh gọi heartbeat trước khi có machine_code/config).
         self._heartbeat_started = False
+        self._machine_location_identity = None
 
         # Bước 8 — sync/batches/submit. _batch_in_flight chặn 2 batch chạy
         # song song (trong 1 tiến trình — 2 tiến trình cùng máy đã bị QLockFile
@@ -480,6 +515,7 @@ class MainWindow(QMainWindow):
         self.pushButtonRegister.clicked.connect(self.on_register_clicked)
         self.pushButtonChangeServerIp.clicked.connect(self.on_change_server_ip_clicked)
         self.pushButtonReset.clicked.connect(self.on_reset_clicked)
+        self._configure_chassis_rear_search()
         self.comboBoxChassisRear.currentTextChanged.connect(
             self.on_chassis_rear_changed
         )
@@ -549,6 +585,14 @@ class MainWindow(QMainWindow):
         # heartbeat runtime"), tự bật lại khi thoát BLOCKED — xem _apply_runtime_status.
         self._heartbeat_timer = QTimer(self)
         self._heartbeat_timer.timeout.connect(self._send_heartbeat)
+
+        # Timer runtime:snapshot — .start() ở _start_machine_runtime_session
+        # (đúng 1 lần lúc phiên bắt đầu), .stop() ở closeEvent. emit_snapshot()
+        # tự no-op nếu phiên chưa/không còn active, an toàn dù timer lỡ chạy
+        # ngoài khoảng đó.
+        self._runtime_snapshot_timer = QTimer(self)
+        self._runtime_snapshot_timer.setInterval(RUNTIME_SNAPSHOT_INTERVAL_MS)
+        self._runtime_snapshot_timer.timeout.connect(self._runtime_client.emit_snapshot)
 
         # Timer 1 lần (singleShot) điền lỗi "SCAN_FAILED" cho vị trí Master
         # relay im lặng (không gửi cả ERROR lẫn dữ liệu thật) khi 1 trạm vật
@@ -974,6 +1018,9 @@ class MainWindow(QMainWindow):
                 f"[{self._now()}] [Heartbeat] Phản hồi không xác định: {response.get('code')} — {response.get('message')}"
             )
             return
+        machine = (response.get("data") or {}).get("machine")
+        if isinstance(machine, dict):
+            self._update_machine_location_display(machine)
         now = datetime.now().astimezone()
         update_app_settings(last_heartbeat_at=now)
         if self._runtime_status == "SERVER_OFFLINE":
@@ -985,6 +1032,26 @@ class MainWindow(QMainWindow):
                 local_status_updated_at=now,
             )
             self._apply_runtime_status("READY", message)
+
+    @staticmethod
+    def _machine_location_value(value):
+        text = str(value).strip() if value is not None else ""
+        return text or "-"
+
+    def _update_machine_location_display(self, machine):
+        identity = tuple(
+            self._machine_location_value(machine.get(field))
+            for field in ("machine_name", "line_name", "station_name")
+        )
+        if identity == self._machine_location_identity:
+            return
+
+        self._machine_location_identity = identity
+        machine_name, line_name, station_name = identity
+        self.labelMachineLocation.setText(
+            f"Machine: {machine_name}\n"
+            f"Line: {line_name}  |  Station: {station_name}"
+        )
 
     def _complete_config_triggered_command(self, correlation_id, ok, message):
         """config được gọi vì command SYNC_PROFILE/RELOAD_CONFIG
@@ -1374,6 +1441,20 @@ class MainWindow(QMainWindow):
         scan_enabled = status in SCAN_ENABLED_STATUSES
         self._scan_blocked = not scan_enabled
 
+        # Kích hoạt kênh Socket.IO /machine-runtime ĐÚNG 1 LẦN/lần chạy app
+        # — cố ý đặt TRƯỚC "if not changed: return" bên dưới, KHÔNG dựa vào
+        # changed: máy đã APPROVED từ lần chạy trước (trường hợp phổ biến
+        # nhất thực tế) có self._runtime_status được set TRÙNG initial_status
+        # NGAY TRƯỚC lệnh gọi _apply_runtime_status() đầu tiên của cả app
+        # run (xem _init_server_worker) — nghĩa là changed=False ngay ở lần
+        # gọi ĐẦU TIÊN cho đúng trường hợp này, 1 guard dựa theo "đổi sang
+        # READY" sẽ không bao giờ kích hoạt được. self._runtime_session_started
+        # không phụ thuộc changed nên luôn đúng bất kể lệnh gọi READY nào
+        # (có 7 chỗ gọi READY trong file) xảy ra trước.
+        if status == "READY" and not self._runtime_session_started:
+            self._runtime_session_started = True
+            self._start_machine_runtime_session()
+
         for widget in (
             self.comboBoxChassisRear,
             self.spinBoxLedBar1Count,
@@ -1436,6 +1517,60 @@ class MainWindow(QMainWindow):
                 message or "Máy đã sẵn sàng hoạt động.",
             )
 
+    def _start_machine_runtime_session(self):
+        """Gọi đúng 1 lần (xem điểm gọi ở _apply_runtime_status) — kích hoạt
+        kết nối Socket.IO /machine-runtime + gửi machine:hello/runtime:start
+        khi đã có machine_code. self._serial/self._uid chắc chắn khác None
+        tại đây (mọi đường tới READY đều đã qua kiểm tra đó trước)."""
+        settings = get_app_settings()
+        server_config = load_server_config()
+        self._runtime_client.start_session(
+            machine_code=settings.get("machine_code"),
+            serial=self._serial,
+            uid=self._uid,
+            app_version=APP_VERSION,
+            local_db_version=settings.get("local_db_version"),
+            host=server_config["host"],
+            port=server_config["port"],
+        )
+        self._runtime_snapshot_timer.start()
+
+    def _on_runtime_connected(self):
+        self._append_log(
+            f"[{self._now()}] [Machine Runtime] Đã kết nối và được server chấp nhận."
+        )
+        add_local_notification(
+            "LOCAL_RUNTIME_CONNECTED",
+            "INFO",
+            "Runtime đã kết nối",
+            "Socket.IO machine-runtime đã kết nối và được server chấp nhận.",
+        )
+
+    def _on_runtime_reconnected(self):
+        self._append_log(f"[{self._now()}] [Machine Runtime] Reconnect thành công.")
+        add_local_notification(
+            "LOCAL_RUNTIME_RECONNECTED",
+            "INFO",
+            "Runtime đã kết nối lại",
+            "Socket.IO machine-runtime vừa reconnect và được server chấp nhận lại.",
+        )
+
+    def _on_runtime_disconnected(self, reason):
+        self._append_log(f"[{self._now()}] [Machine Runtime] Mất kết nối: {reason}")
+        add_local_notification(
+            "LOCAL_RUNTIME_DISCONNECTED",
+            "WARNING",
+            "Runtime mất kết nối",
+            f"Socket.IO machine-runtime mất kết nối — sẽ tự reconnect. ({reason})",
+        )
+
+    def _on_runtime_blocked(self, message):
+        add_local_notification(
+            "LOCAL_RUNTIME_BLOCKED", "CRITICAL", "Runtime bị chặn", message
+        )
+        self._append_log(f"[{self._now()}] [Machine Runtime] Bị chặn: {message}")
+        self._apply_runtime_status("BLOCKED", message)
+
     def _apply_server_online(self, is_online):
         was_online = self._server_online
         changed = was_online != is_online
@@ -1495,6 +1630,9 @@ class MainWindow(QMainWindow):
     def on_register_clicked(self):
         dlg = RegisterWindow(
             self.server_worker,
+            app_version=APP_VERSION,
+            app_release_date=APP_RELEASE_DATE,
+            app_product=APP_PRODUCT,
             on_sync_now=lambda: self._maybe_start_sync_batch("MANUAL"),
             on_check_data=lambda: self._start_reconcile_check(manual=True),
             on_sync_profile=lambda: self._check_machine_config(),
@@ -1567,21 +1705,99 @@ class MainWindow(QMainWindow):
     # Chassis Rear — dữ liệu mẫu tạm (mapping_store), thay bằng server sau
     ######################################################################
 
+    def _configure_chassis_rear_search(self):
+        """Cho nhập để lọc mã chassis theo chuỗi con, không thêm text tự do."""
+        combo = self.comboBoxChassisRear
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        line_edit = combo.lineEdit()
+        line_edit.setFont(combo.font())
+        line_edit.setPlaceholderText("Nhập để tìm mã Chassis Rear")
+        line_edit.editingFinished.connect(
+            self._finish_chassis_rear_search
+        )
+        self._last_valid_chassis_code = None
+        self._finishing_chassis_rear_search = False
+
+        completer = combo.completer()
+        completer.setCompletionMode(QCompleter.PopupCompletion)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        completer.setMaxVisibleItems(12)
+        completer.popup().setFont(combo.font())
+        completer.activated[str].connect(self._finish_chassis_rear_search)
+        combo.activated[str].connect(self._finish_chassis_rear_search)
+
     def _load_mappings(self):
         entries = load_mappings()
         self._mappings_by_chassis = {e["chassis_rear"]: e for e in entries}
+        self._chassis_codes_casefold = {
+            code.casefold(): code for code in self._mappings_by_chassis
+        }
         self.comboBoxChassisRear.clear()
         self.comboBoxChassisRear.addItems(list(self._mappings_by_chassis.keys()))
 
-    def on_chassis_rear_changed(self, code):
-        entry = self._mappings_by_chassis.get(code)
+    def _canonical_chassis_code(self, code):
+        return self._chassis_codes_casefold.get((code or "").strip().casefold())
+
+    def _finish_chassis_rear_search(self, selected_code=None):
+        """Kết thúc nhập Chassis và trả keyboard events lại cho HID scanner."""
+        if self._finishing_chassis_rear_search:
+            return
+
+        self._finishing_chassis_rear_search = True
+        try:
+            canonical_code = self._canonical_chassis_code(selected_code)
+            if canonical_code:
+                self.comboBoxChassisRear.setCurrentText(canonical_code)
+            self._restore_last_valid_chassis_code()
+            self.comboBoxChassisRear.completer().popup().hide()
+            self.comboBoxChassisRear.lineEdit().clearFocus()
+        finally:
+            self._finishing_chassis_rear_search = False
+
+    def _restore_last_valid_chassis_code(self):
+        """Khôi phục lựa chọn trước nếu người dùng rời ô với text chưa hợp lệ."""
+        combo = self.comboBoxChassisRear
+        if self._canonical_chassis_code(combo.currentText()):
+            return
+
+        fallback_code = self._last_valid_chassis_code
+        entry = self._mappings_by_chassis.get(fallback_code)
         if not entry:
             return
+
+        combo.blockSignals(True)
+        combo.setCurrentText(fallback_code)
+        combo.blockSignals(False)
+        self._show_chassis_rear_entry(fallback_code, entry)
+
+    def _show_chassis_rear_entry(self, code, entry):
         self.labelLedBar1RefCode.setText(entry["led1"] or "-")
         self.labelLedBar2RefCode.setText(entry["led2"] or "-")
         self.labelQrBottomRefCode.setText(code)
         self._apply_ledbar2_lock(entry)
+
+    def on_chassis_rear_changed(self, code):
+        canonical_code = self._canonical_chassis_code(code)
+        entry = self._mappings_by_chassis.get(canonical_code)
+        if not entry:
+            self.labelLedBar1RefCode.setText("-")
+            self.labelLedBar2RefCode.setText("-")
+            self.labelQrBottomRefCode.setText("-")
+            return
+
+        if code != canonical_code:
+            self.comboBoxChassisRear.blockSignals(True)
+            self.comboBoxChassisRear.setEditText(canonical_code)
+            self.comboBoxChassisRear.blockSignals(False)
+
+        self._last_valid_chassis_code = canonical_code
+        self._show_chassis_rear_entry(canonical_code, entry)
         update_app_settings(active_profile_id=entry.get("profile_id"))
+        self._runtime_client.set_current_product(
+            canonical_code, entry.get("profile_id")
+        )
 
     def _apply_ledbar2_lock(self, entry):
         """Khoá cột LED BAR 2 (quota=0, disable spin+list+ref_label) khi
@@ -1716,7 +1932,12 @@ class MainWindow(QMainWindow):
     ######################################################################
 
     def eventFilter(self, obj, event):
-        """Bắt phím toàn cục để phát hiện chuỗi gõ từ máy quét HID (giả lập
+        """Khôi phục Chassis Rear khi click ngoài và bắt phím máy quét HID.
+
+        Click vào vùng nền không làm QLineEdit mất focus nên không phát
+        editingFinished; xử lý MouseButtonPress toàn cục để vẫn fallback.
+
+        Bắt phím toàn cục để phát hiện chuỗi gõ từ máy quét HID (giả lập
         gõ phím + Enter). Phân biệt với người gõ phím thật bằng TỐC ĐỘ: máy
         quét gõ rất nhanh, người gõ tay chậm hơn nhiều — dùng time.monotonic()
         (đồng hồ đơn điệu, không bị ảnh hưởng chỉnh giờ hệ thống) đo khoảng
@@ -1736,12 +1957,28 @@ class MainWindow(QMainWindow):
         object cũ vừa huỷ được cấp lại đúng địa chỉ). Giải pháp đúng — LUÔN
         NUỐT (return True) mọi phím (ký tự thường lẫn Enter) ngay khi tính
         năng đang bật, không cần dò trùng gì cả — chặn đứng Qt phát lại từ
-        gốc. An toàn vì MainWindow không có ô nhập text tự do/nút mặc định
-        cần phím Enter nào (đã xác nhận qua code)."""
+        gốc. Riêng ô tìm Chassis Rear được loại trừ để người dùng vẫn nhập
+        và xác nhận nội dung autocomplete bình thường."""
+        if (
+            event.type() == QEvent.MouseButtonPress
+            and self.comboBoxChassisRear.lineEdit().hasFocus()
+        ):
+            combo = self.comboBoxChassisRear
+            popup = combo.completer().popup()
+            clicked_inside_search = isinstance(obj, QWidget) and (
+                obj is combo
+                or combo.isAncestorOf(obj)
+                or obj is popup
+                or popup.isAncestorOf(obj)
+            )
+            if not clicked_inside_search:
+                self._finish_chassis_rear_search()
+
         if (
             event.type() == QEvent.KeyPress
             and self._hid_scanner_enabled
             and QApplication.activeWindow() is self
+            and not self.comboBoxChassisRear.lineEdit().hasFocus()
         ):
             now = time.monotonic()
             gap = (
@@ -1952,7 +2189,10 @@ class MainWindow(QMainWindow):
             self._finalize_scan_session()
 
     def _current_entry(self):
-        return self._mappings_by_chassis.get(self.comboBoxChassisRear.currentText())
+        code = self._canonical_chassis_code(
+            self.comboBoxChassisRear.currentText()
+        )
+        return self._mappings_by_chassis.get(code)
 
     def _describe_ng(self, code, text, entry):
         """Dựng câu tiếng Việt hiển thị trong log từ mã NG cố định — không bao
@@ -2333,12 +2573,22 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             self._append_log(f"[{self._now()}] Lỗi ghi local DB: {exc}")
+            self._runtime_client.emit_runtime_error("LOCAL_DB_WRITE_FAILED", str(exc))
             final_is_ok, final_reason, first_scan_at, local_scan_id = (
                 is_ok,
                 ng_reason,
                 None,
                 None,
             )
+
+        self._runtime_client.record_scan_result(
+            product_code=(entry or {}).get("chassis_rear"),
+            profile_id=profile_id,
+            is_ok=final_is_ok,
+            last_code=qr["text"],
+            local_scan_id=local_scan_id or "",
+            pending_sync=get_scan_counts().get("pending_sync", 0),
+        )
 
         if final_reason == NG_LOCAL_DUPLICATE:
             self._last_duplicate_first_scan_at = first_scan_at
@@ -2761,6 +3011,21 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self._stop_result_alerts()
         self.manager.stop_all()
+        self._runtime_snapshot_timer.stop()
+        if self._runtime_client.stop():
+            add_local_notification(
+                "LOCAL_RUNTIME_STOPPED",
+                "INFO",
+                "Đã dừng runtime",
+                "Server đã xác nhận runtime:stop trước khi đóng ứng dụng.",
+            )
+        elif self._runtime_client.was_last_stop_unconfirmed():
+            add_local_notification(
+                "LOCAL_RUNTIME_STOP_UNCONFIRMED",
+                "WARNING",
+                "Chưa xác nhận dừng runtime",
+                "Không nhận được ACK runtime:stop từ server trước khi đóng ứng dụng.",
+            )
         self.server_worker.stop()
         self.server_worker.wait()
         super().closeEvent(event)

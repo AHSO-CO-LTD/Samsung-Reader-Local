@@ -6,3 +6,9 @@ psycopg[binary]==3.3.4
 
 # REST client kết nối Samsung QR server
 requests==2.34.2
+
+# Socket.IO client — kênh /machine-runtime (docs/10-huong-dan-api-may-local-python (2).md mục 12.1)
+python-socketio[client]==5.16.3
+
+# Verify chữ ký Ed25519 cho license kích hoạt cục bộ (licensing/license_client.py)
+pynacl==1.5.0

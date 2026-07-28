@@ -11,7 +11,7 @@
 - **Trạng thái**: ✅ Bước 1.
 - **Mục đích trong project**: kiểm tra server có đang chạy không, tách biệt hoàn toàn khỏi việc máy này đã đăng ký hay chưa. Đây là điều kiện tiên quyết cho MỌI lệnh gọi khác — nếu server sập, không có lý do gì gọi các API còn lại. Cũng là nền tảng cho cơ chế local-first: khi `server_online=False`, app biết phải chuyển sang chế độ chỉ ghi local, không cố gắng gửi lên server.
 - **Contract**: `GET /api/health`, không tham số. Thành công: `HEALTH_OK`.
-- **File**: `server/api_client.py:health()`, `ui/main_window.py:_check_server_health/_apply_server_online`. `QTimer` 15s, chạy suốt vòng đời app, không phụ thuộc trạng thái đăng ký.
+- **File**: `server/api_client.py:health()`, `ui/main_window.py:_check_server_health/_apply_server_online`. `QTimer` 5s (`SERVER_HEALTH_CHECK_INTERVAL_MS`), chạy suốt vòng đời app, không phụ thuộc trạng thái đăng ký.
 - **Ghi chú**: đây là API DUY NHẤT không cần `serial`/`uid` — không định danh, chỉ hỏi "server có sống không".
 
 ### `POST /api/machines/register-request` + `GET /api/machines/register-requests/:id/status`
@@ -19,7 +19,7 @@
 - **Trạng thái**: ✅ Bước 2.
 - **Mục đích trong project**: máy này (định danh bằng `serial`+`uid` phần cứng qua `machine/hardware_id.py`) chưa có `machine_code` chính thức — server không biết trạm QA này tồn tại. Đây là bước "khai sinh" 1 trạm mới trên dây chuyền, cần admin duyệt tay bên server (import license + approve). Không có bước này, không API nào khác chấp nhận dữ liệu từ máy này.
 - **Contract**: `POST .../register-request` body `{serial, uid, ip_address}` (từ Bước "đổi IP", `ip_address` luôn gửi `null` — không còn gửi IP máy local lên server). Trả `MACHINE_REGISTER_REQUEST_SENT` (kèm `request_id`) hoặc `MACHINE_REGISTER_DUPLICATE`. `GET .../register-requests/:request_id/status` poll bằng `request_id`, trả `MACHINE_REGISTER_PENDING` (chờ license/duyệt) → `MACHINE_REGISTER_APPROVED` (kèm `machine_code`) hoặc `MACHINE_REGISTER_REJECTED`.
-- **File**: `ui/register_window.py` — dialog riêng, tự poll khi `PENDING` (12s), không tự động mở lúc khởi động app.
+- **File**: `ui/register_window.py` — tab Registration trong dialog Register, tự poll khi `PENDING` (12s), không tự động mở lúc khởi động app.
 - **Ghi chú**: hành động HIẾM — chỉ làm khi setup máy mới hoặc khi dữ liệu đăng ký trên server bị mất/reset (đã gặp nhiều lần trong quá trình dev — xem `docs/dev.md` mục 7). Vì hiếm và cần người duyệt tay, tách hẳn thành dialog thay vì chạy ngầm.
 
 ### `GET /api/machines/identity/status`
@@ -29,6 +29,13 @@
 - **Contract**: `GET .../identity/status?serial=...&uid=...`. 5 code: `MACHINE_IDENTITY_APPROVED` (có `machine_code`), `MACHINE_REGISTER_PENDING` (dùng chung với luồng đăng ký), `MACHINE_IDENTITY_NOT_REGISTERED`, `MACHINE_IDENTITY_DISABLED` (đã duyệt nhưng admin tắt), `MACHINE_IDENTITY_MISMATCH` (`success:false` — serial/uid trùng máy khác).
 - **File**: `ui/main_window.py:_handle_identity_status_result`, `_apply_runtime_status`. Gọi ngay lúc mở app + định kỳ 15s **chỉ khi chưa READY** (dừng hẳn khi đã READY — không cần hỏi lại liên tục khi đã ổn).
 - **Ghi chú**: điều khiển trực tiếp `local_runtime_status` → banner `labelRuntimeBanner` + khoá input scan + **chặn dữ liệu thật** ở `on_data_received` (không chỉ disable widget, vì disable không ngăn được reader gửi data qua signal).
+
+### Kích hoạt license cục bộ (tính năng phụ, đang bypass)
+
+- **Trạng thái**: code được giữ lại nhưng **không phải gate** và không ảnh hưởng luồng đăng ký/scan. Tab License hiện tạm disable bằng `LICENSE_TAB_ENABLED = False`; tab Registration vẫn hoạt động bình thường.
+- **File**: tab License trong `ui/register_window.py`/`.ui`, dùng `licensing/service.py` và `licensing/license_client.py`. Không xoá code license; chỉ bật lại flag khi tính năng được đưa vào sử dụng.
+- **DB contract**: chỉ đọc/ghi `local_app_settings.machine_license_key`. Machine ID và trạng thái `active`/`unactivated`/`invalid` được tính lại khi mở hoặc refresh tab; tuyệt đối không ghi `machine_code`, `registration_status`, `license_activated_at` hay `local_runtime_status`.
+- **Lý do bypass**: chưa có license thật từ bên giữ private key/công cụ ký để validation trên máy thật. API gửi `machine_code`+`license_key` lên server vẫn để dành cho giai đoạn sau; không thay đổi API server trong lần này.
 
 ### `GET /api/machines/config`
 
@@ -47,9 +54,10 @@
 
 ### `POST /api/machines/heartbeat`
 
-- **Trạng thái**: ✅ Bước 6, đã verify với server thật (2026-07-15), kể cả round-trip mất kết nối/phục hồi thật.
+- **Trạng thái**: ✅ Bước 6, đã verify với server thật (2026-07-15), kể cả round-trip mất kết nối/phục hồi thật. Ngày 2026-07-28 user đã live-test thêm việc cập nhật Line/Station từ response thật có giá trị khác `null`.
 - **Mục đích trong project**: khác `health` (hỏi server còn sống không), đây là báo cho server biết **MÁY NÀY** còn sống + số liệu local hiện tại (tổng/OK/NG/pending). Cho phép dashboard trung tâm biết trạm nào đang online/offline gần thời gian thực — quản lý line phát hiện 1 trạm bị treo/mất mạng ngay, không phải đợi hàng giờ mới nhận ra không có dữ liệu về. Cũng là điều kiện để mở kênh Socket.IO runtime.
 - **Vị trí trong flow**: sau `config`, trước khi poll command lần đầu (theo doc mục 6.1).
+- **UI machine/location**: mỗi response `HEARTBEAT_ACCEPTED` đọc `data.machine.machine_name/line_name/station_name` và cập nhật label góc trên trái MainWindow ngay khi bộ ba này thay đổi. Giá trị rỗng hiển thị `-`; mất mạng giữ nguyên dữ liệu heartbeat thành công gần nhất. Ba field này do server/admin quản lý; client không tự gán hoặc lấy giá trị giả từ local DB.
 - **File**: `ui/main_window.py:_send_heartbeat/_handle_heartbeat_result/_ensure_heartbeat_started`, `db/local_db.py:get_server_settings/get_scan_counts`. `local_runtime_status=SERVER_OFFLINE` khi mất kết nối (nằm trong `SCAN_ENABLED_STATUSES` — KHÔNG khoá scan, đúng thiết kế local-first), tự phục hồi `READY` khi heartbeat thành công trở lại.
 
 ### `POST /api/scans/submit`
@@ -70,17 +78,26 @@
   - `PROFILE_NOT_FOUND` thật (qua `_submit_scan` với `profile_id` giả) — xác nhận đúng tự động gọi lại `_check_machine_config()`.
   - Stale-response với TIMING THẬT (không mock): bắn 2 scan liên tiếp không chờ nhau, item của scan CŨ bị Qt xoá thật (không phải mồ côi) trước khi response của chính nó về — xác nhận generation-check (`_session_generation`/`_pending_scan_ui`) ngăn chặn đúng, KHÔNG crash, DB vẫn cập nhật đúng cho cả 2 bản ghi, item/label hiện tại chỉ phản ánh đúng sản phẩm mới nhất.
 
-## Chưa làm
-
 ### `POST /api/sync/batches/submit` + `POST /api/sync/reconcile/check` + `.../pull`
 
-- **Trạng thái**: ❌ Chưa làm.
+- **Trạng thái**: ✅ Bước 8 (`batches/submit`) + Bước 9 (`reconcile/check` + `.../pull`), đã verify với server thật (2026-07-16) — xem `docs/pending_live_test.md` lịch sử test Bước 8.
 - **Mục đích trong project**: app này **local-first** theo thiết kế (mất mạng vẫn phải scan được, validate cục bộ trước). Đây là cơ chế "bắt kịp": `batches/submit` gửi lô dữ liệu tồn khi offline; `reconcile/check` + `.../pull` đối chiếu số liệu/checksum để phát hiện + vá lệch dữ liệu sau 1 lần mất mạng dài hoặc crash app. Không có nó, mất mạng lâu có thể mất vĩnh viễn dữ liệu QA — đây là thứ biến "local-first" từ ý tưởng thiết kế thành thực sự an toàn.
-- **Trigger**: theo doc, kích hoạt bởi `sync_batch_trigger_type` (`STARTUP`/`SHUTDOWN`/`NETWORK_RESTORED`/`MANUAL`) hoặc command `SYNC_SCAN_DATA` (Bước 5 — hiện luôn ack FAILED vì API này chưa tồn tại).
+- **Trigger `batches/submit`**: `sync_batch_trigger_type` — `STARTUP` (tự động lúc mở app nếu có bản ghi `pending`/`failed_retryable` tồn đọng) và `MANUAL` (nút Sync Now) dùng chung 100% code (chỉ khác chuỗi `trigger_type` truyền vào); command `SYNC_SCAN_DATA` (Bước 5) gọi `_maybe_start_sync_batch("MANUAL", command_id=...)` rồi tự ack qua `commands/:id/ack` khi xong.
+- **Trigger `reconcile`**: dialog `ReconcileWindow` mở tay qua nút "Check Data" (Register window) — không tự động, không có polling định kỳ. Review gộp thẳng vào bước Pull from Server (không có checkbox chọn từng dòng riêng).
+- **Contract chính**: `batches/submit` trả `data.results[]` — mỗi item `success:true/false` kèm mã (`SERVER_OK`/`LOCAL_NG_SAVED` khi thành công, hoặc mã lỗi cụ thể như `BATCH_MACHINE_CODE_MISMATCH`); local xử lý **generic theo `success`**, không cần biết trước hết mọi mã lỗi. `sync_batches.status` tổng hợp `PARTIAL_FAILED`/thành công hết tuỳ kết quả từng item. `reconcile/check` trả về số lệch (thiếu trên server/thiếu trên local/lệch trạng thái); `.../pull` áp dụng bản vá server trả về vào local.
+- **File**: `ui/main_window.py` (`_maybe_start_sync_batch`, `_start_sync_batch`, `_handle_batch_submit_response`, `_start_reconcile_check`, `_handle_reconcile_check_response`, `_handle_reconcile_push`/`_pull`), `db/local_db.py` (`claim_pending_scans_for_batch`, `apply_sync_batch_result`, `build_reconcile_payload`, `claim_specific_scans_for_batch`, `apply_reconcile_pull`), `ui/reconcile_window.py`.
+- **Đã verify với server thật (2026-07-16)**: trigger STARTUP thật với 10 bản ghi tồn đọng thật — server trả đúng `BATCH_SUBMIT_PARTIAL_FAILED` (3× `SERVER_OK`, 2× `LOCAL_NG_SAVED`, 5× `BATCH_MACHINE_CODE_MISMATCH` — mã lỗi mới không có sẵn trong doc lúc viết code, xử lý generic theo `success:false` vẫn bắt đúng); local cập nhật đúng `SYNCED`/`FAILED_BLOCKED` theo từng item, `sync_batches.status='PARTIAL_FAILED'`, totals đúng, notification `OFFLINE_SYNC_HAS_NG` bắn đúng, `local_runtime_status` revert `SYNCING→READY` đúng.
+- **Ghi chú (`scans/submit` gotcha liên quan)**: xem mục "Bug thật tìm được + đã sửa" ở `scans/submit` phía trên — `duplicate_key` phải giữ nguyên khi Bước 8 đọc lại từ DB để gửi lại, đúng yêu cầu idempotency của doc.
 
 ### Socket.IO `/machine-runtime`
 
-- **Trạng thái**: ❌ Chưa làm.
-- **Mục đích trong project**: KHÔNG phải hồ sơ QA chính thức (đó là việc của `scans/submit`) — kênh phụ hiển thị "đang chạy gì ngay lúc này" cho dashboard vận hành của server (đang chạy chassis nào, tổng OK/NG phiên hiện tại, reconnect count). Giá trị quan sát cho quản lý line, không ảnh hưởng tính đúng đắn của app local.
-- **Vì sao đứng cuối roadmap**: cần `machine_code` (đã có) + config (đã có) + khái niệm "operator bấm Start/Stop 1 lượt chạy" mà `ui/main_window.py` hiện CHƯA có (app hiện chỉ liên tục nhận scan, không có nút Start/Stop tách rời).
-- **Khác biệt kỹ thuật quan trọng**: không dùng `SamsungQrServerClient`/`ServerWorker` hiện tại (REST) — cần thư viện `python-socketio`, kết nối `http://SERVER_HOST:3979/machine-runtime` (không có `/api`), là 1 kênh hoàn toàn riêng.
+- **Trạng thái**: ✅ Xong, đã verify với server thật (2026-07-21).
+- **Mục đích trong project**: KHÔNG phải hồ sơ QA chính thức (đó là việc của `scans/submit`) — kênh phụ hiển thị "đang chạy gì ngay lúc này" cho dashboard vận hành của server (đang chạy chassis nào, tổng OK/NG phiên hiện tại). Giá trị quan sát cho quản lý line, không ảnh hưởng tính đúng đắn của app local nếu kênh này lỗi/mất kết nối.
+- **Quyết định thiết kế**: "phiên" (session) = TRỌN 1 LẦN CHẠY APP — mở app → `runtime:start` (lúc đạt READY), chuẩn bị đóng app → `runtime:stop`. KHÔNG gắn với khái niệm "operator bấm nút Start/Stop 1 lượt chạy" như doc gốc mô tả (app không có nút này). Bộ đếm `total/ok/ng` chỉ reset đúng 1 lần lúc `runtime:start`, giữ nguyên tới khi đóng app; `product_total_count`/`product_ok_count`/`product_ng_count` TẠM THỜI lặp lại đúng giá trị `total/ok/ng` (không tách riêng theo `product_code`, đơn giản hoá theo yêu cầu — có thể làm sau nếu cần).
+- **Contract**: `http://SERVER_HOST:3979/machine-runtime` — cùng host/port REST (`server/server_config.py`), khác path, KHÔNG có `/api`, là Socket.IO namespace (không phải raw WebSocket). 6 event client emit: `machine:hello` (ngay sau mọi lần connect/reconnect), `runtime:start` (1 lần/phiên), `runtime:update` (mỗi khi có scan mới hoặc đổi `product_code`), `runtime:snapshot` (định kỳ 5s + ngay sau reconnect, KHÔNG gửi lại `runtime:start`), `runtime:stop` (lúc đóng app), `runtime:error` (lỗi local, vd ghi DB thất bại). 1 event nhận: `machine:accepted` (server phản hồi `machine:hello`, `{success, code:"RUNTIME_SOCKET_ACCEPTED", data}`).
+- **ACK khi đóng app**: `runtime:stop` dùng `sio.call(..., timeout=3)` thay vì `emit` rồi chờ cố định. Chỉ ACK dict có `code="RUNTIME_SESSION_STOPPED"` mới tạo notification `LOCAL_RUNTIME_STOPPED` và được coi là server đã xác nhận; timeout, lỗi hoặc ACK sai tạo `LOCAL_RUNTIME_STOP_UNCONFIRMED`, sau đó client vẫn disconnect để không treo shutdown. Thứ tự thành công là `runtime:stop` → nhận ACK → disconnect transport → đóng app. Vì callback disconnect vẫn chạy trong teardown, log local có thể có `LOCAL_RUNTIME_DISCONNECTED (client disconnect)` ngay trước `LOCAL_RUNTIME_STOPPED`; ACK stop đã nhận vẫn hợp lệ. Phía server không nên dùng sự kiện socket disconnect để ghi đè trạng thái phiên STOPPED.
+- **File**: `server/runtime_socket_client.py` (`MachineRuntimeClient` — wrapper `socketio.Client`; `_RuntimeConnectWorker` — `QThread` retry-connect ban đầu, sống suốt phiên kết nối), `ui/main_window.py` (`_start_machine_runtime_session`, hook trong `_apply_runtime_status`/`on_chassis_rear_changed`/`_finalize_scan_session`/`closeEvent`, `QTimer` 5s cho `runtime:snapshot`).
+- **2 cạm bẫy kỹ thuật thật đã tự verify + fix** (chi tiết đầy đủ ở `docs/dev.md` mục 7 — quan trọng nếu sau này sửa lại module này):
+  1. `socketio.Client.connected` còn `False` **trong chính lúc** handler `connect` đang chạy (thứ tự cố định trong source, không phải race hiếm) — guard `if not self._sio.connected` trong `_emit()` từng âm thầm chặn `machine:hello` mọi lần, không exception, không log lỗi. Fix: `_emit(..., require_connected=False)` riêng cho lời gọi từ `_on_connect`.
+  2. `QThread` bọc `socketio.Client.connect()` mà `return` ngay sau khi connect thành công khiến MỌI event nhận về sau (kể cả `machine:accepted`) không bao giờ tới handler, dù `sio.connected` vẫn `True`. Fix: `_RuntimeConnectWorker` phải chặn ở `threading.Event.wait()` sau khi connect xong, sống suốt cả phiên kết nối.
+- **Đã verify với server thật**: connect + `machine:hello` + `machine:accepted` (dưới 1 giây); đổi Chassis Rear → `runtime:update` đúng `product_code` mới; quét → `runtime:update` tăng đúng bộ đếm; `runtime:error`; `runtime:snapshot` định kỳ 5s liên tục ổn định nhiều phút; **2 lần mất kết nối thật + tự kết nối lại** (tắt/bật server dev thật giữa phiên) — `LOCAL_RUNTIME_DISCONNECTED` (WARNING) rồi `LOCAL_RUNTIME_RECONNECTED` (INFO) đúng thứ tự cả 2 lần, xác nhận KHÔNG gửi lại `runtime:start` lần 2 (chỉ gửi `runtime:snapshot` theo đúng thủ tục reconnect của doc); đóng app → `runtime:stop` + notification `LOCAL_RUNTIME_STOPPED`, kể cả sau khi đã trải qua reconnect; build PyInstaller `--onedir` thật — connect/accept/stop hoạt động đúng trên bản `.exe` đóng gói, không cần thêm `hiddenimports` (giữ nguyên `[]`).

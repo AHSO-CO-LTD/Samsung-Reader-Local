@@ -23,3 +23,36 @@ Còn thiếu đúng 1 việc, cần admin tạo lệnh thật trên server mới
 - Chưa xác nhận lệnh `SYNC_SCAN_DATA` THẬT do server tạo có kích hoạt đúng `_maybe_start_sync_batch("MANUAL", command_id=...)` rồi ack lại đúng lúc qua `commands/:id/ack` hay không — chỉ mới test bằng cách gọi thẳng hàm với `command_id` giả (xem test dispatch), chưa qua đường `commands/poll` thật.
 
 **Cách test khi có lệnh thật**: nhờ admin tạo command `SYNC_SCAN_DATA` cho `machine_code=Local02`, mở app thật, đợi tối đa 30s (interval poll), xem `labelPendingSync`/log/`api_request_logs` (`request_type IN ('commands_poll','batch_submit','command_ack')`) qua Query Tool để xác nhận batch chạy đúng rồi ack đúng.
+
+## Heartbeat → Machine/Line/Station
+
+Đã hoàn tất (2026-07-28). MainWindow thật đã nhận
+`HEARTBEAT_ACCEPTED` và hiển thị `data.machine.machine_name` ở góc trên trái;
+user đã tự live-test tiếp với `line_name` và `station_name` thật khác `null`,
+xác nhận Line/Station cập nhật đúng từ heartbeat. Không dùng dữ liệu giả hoặc
+giá trị local DB để kết luận phần này.
+
+## Chassis Rear → Keyboard-HID
+
+Đã hoàn tất (2026-07-28). User đã live-test bằng máy quét HID vật lý qua toàn
+bộ đường focus của `comboBoxChassisRear`: focus ô nhập, chọn từ popup
+autocomplete, chọn từ dropdown, xác nhận bằng Enter và click ra ngoài. Chassis
+được giữ/fallback đúng và HID tiếp tục nhận scan bình thường sau khi kết thúc
+tìm kiếm.
+
+## Socket.IO `/machine-runtime`
+
+Đã verify với server thật (2026-07-21): connect+`machine:hello`+`machine:accepted`, `runtime:start` đúng 1 lần/phiên, đổi chassis → `runtime:update`, `runtime:error`, `runtime:snapshot` định kỳ 5s ổn định nhiều phút, **2 lần mất/khôi phục kết nối thật** (tắt/bật server dev giữa phiên) → `LOCAL_RUNTIME_DISCONNECTED`/`LOCAL_RUNTIME_RECONNECTED` đúng thứ tự, không gửi lại `runtime:start`, đóng app → `runtime:stop` + `LOCAL_RUNTIME_STOPPED` (kể cả sau khi đã reconnect), build PyInstaller `--onedir` thật.
+
+Đã verify lại với server dev thật (2026-07-28): `runtime:stop` dùng `sio.call(..., timeout=3)`, server ACK ngay với `success=true`, `code="RUNTIME_SESSION_STOPPED"`; MainWindow chỉ ghi `LOCAL_RUNTIME_STOPPED` sau ACK rồi mới disconnect/thoát. Không còn sleep cố định; timeout/ACK sai được đánh dấu `LOCAL_RUNTIME_STOP_UNCONFIRMED`.
+
+Trong shutdown thành công, callback transport disconnect có thể ghi
+`LOCAL_RUNTIME_DISCONNECTED (client disconnect)` ngay trước
+`LOCAL_RUNTIME_STOPPED`. Đây là disconnect chủ động sau khi đã nhận ACK, không
+làm ACK stop mất hiệu lực. Nếu dashboard server đổi phiên từ STOPPED sang trạng
+thái khác chỉ vì socket disconnect, cần sửa state handling phía server.
+
+Còn 2 việc CHƯA verify qua đúng con đường thật 100% (đã verify gián tiếp/cô lập, coi như rủi ro thấp nhưng nên tự test lại khi có dịp):
+
+- **`runtime:update` lúc chốt phiên quét**: chỉ mới verify qua gọi thẳng `MachineRuntimeClient.record_scan_result()` (tránh dùng DB/reader thật lúc test riêng phần Socket.IO) — CHƯA quét 1 mã thật qua `_finalize_scan_session()` thật để xác nhận `runtime:update` tự bắn đúng lúc đó. Cách test: quét 1 mã thật (OK hoặc NG) trong lúc runtime session đang active, xem dashboard server nhận đúng `runtime:update` với `last_result`/`last_code` khớp.
+- **Mở app khi server ĐÃ OFFLINE SẴN từ đầu** (khác với mất kết nối giữa chừng — đã test ở trên): chỉ mới verify ở mức cô lập (`MachineRuntimeClient.start_session()` trỏ thẳng vào cổng đóng — xác nhận `_RuntimeConnectWorker` retry đúng, không crash, `.stop()` không hang) — CHƯA mở `MainWindow` thật trong lúc server dev tắt hẳn từ đầu để xác nhận app vẫn mở/quét bình thường và kênh tự kết nối khi server online lại, không cần khởi động lại app. Cách test: tắt server dev TRƯỚC khi mở app, mở app xác nhận không treo/crash, quét thử vẫn hoạt động bình thường, rồi bật server lên xem `LOCAL_RUNTIME_CONNECTED` tự xuất hiện trong vài giây.

@@ -13,15 +13,19 @@ Hướng dẫn cài đặt cho người lắp đặt máy tại chỗ (máy prod
 3. Mở `LocalReaderMonitor.exe`.
 4. Bấm **Change Server IP** — nhập đúng địa chỉ IP:port của server thật tại nhà máy (không phải địa chỉ mặc định lúc dev).
 5. Bấm **Configure** — thêm các đầu đọc thật (vai trò LED BAR/QRCODE BOTTOM) với đúng IP/port thật của từng đầu đọc (không phải cấu hình mock/test). Nếu xưởng có dùng thêm máy quét mã vạch cầm tay loại Keyboard-HID (giả lập gõ phím), checkbox "Bật máy quét mã vạch cầm tay (HID)" trong cùng cửa sổ này mặc định đã bật sẵn — không cần cấu hình IP/port gì thêm, chỉ cần cắm máy quét vào máy tính và focus vào MainWindow.
-6. Bấm **Register** — gửi yêu cầu đăng ký máy, chờ admin phía server duyệt (xem trạng thái ngay trong dialog).
-7. Sau khi được duyệt (trạng thái chuyển READY), quét thử 1 sản phẩm thật để xác nhận toàn bộ chuỗi hoạt động (đọc mã → so khớp OK/NG → gửi server).
-8. Nếu gặp lỗi ở bất kỳ bước nào, gửi kèm file `app_error.log` (nằm cạnh `LocalReaderMonitor.exe`, chỉ xuất hiện khi có lỗi chưa xử lý được) cho kỹ sư phụ trách.
+6. Bấm **Register** — gửi yêu cầu đăng ký máy, chờ admin phía server duyệt (xem trạng thái ngay trong dialog). Tab License đang tạm disable có chủ đích và không ảnh hưởng việc đăng ký/quét.
+7. Khi app nhận heartbeat, kiểm tra góc trên bên trái hiện đúng tên **Machine**, **Line** và **Station** do server gán. Dấu `-` nghĩa là server chưa cung cấp field tương ứng; cần nhờ admin cập nhật trên server rồi chờ heartbeat kế tiếp.
+8. Sau khi được duyệt (trạng thái chuyển READY), chọn **Chassis Rear**. Có thể nhập một phần bất kỳ của mã để lọc gợi ý, không phân biệt hoa/thường; phải chọn mã đầy đủ trong danh sách. Nếu click ra ngoài khi mã còn nhập dở, app tự trở về mã hợp lệ trước đó.
+9. Quét thử 1 sản phẩm thật để xác nhận toàn bộ chuỗi hoạt động (đọc mã → so khớp OK/NG → gửi server). Khi đóng app, chờ app tự hoàn tất gửi `runtime:stop`; shutdown bình thường có thể chờ tối đa khoảng 3 giây nếu server chưa ACK.
+10. Nếu gặp lỗi ở bất kỳ bước nào, gửi kèm file `app_error.log` (nằm cạnh `LocalReaderMonitor.exe`, chỉ xuất hiện khi có lỗi chưa xử lý được) cho kỹ sư phụ trách.
 
 ## Khắc phục sự cố cơ bản
 
 - **Mở app báo lỗi kết nối DB ngay lập tức**: `setup.ps1` chưa chạy hoặc chạy chưa xong — chạy lại `setup.ps1`.
 - **App mở được nhưng không kết nối server**: kiểm tra lại IP:port đã nhập ở "Change Server IP", và máy có thật sự nối được vào mạng LAN nhà máy không.
 - **Đầu đọc hiện "Mất kết nối"**: kiểm tra IP/port đầu đọc trong "Configure", và cáp mạng/nguồn của đầu đọc vật lý.
+- **Máy quét HID gõ vào ô Chassis Rear**: hoàn tất việc chọn chassis bằng gợi ý/Enter hoặc click ra ngoài để ô tìm kiếm bỏ focus, sau đó quét lại.
+- **Machine/Line/Station hiện sai hoặc `-`**: đây là metadata server trả trong heartbeat, không phải cấu hình local; nhờ admin kiểm tra máy đã được gán đúng line/station rồi chờ lần heartbeat tiếp theo.
 - **App tự đóng không rõ lý do**: xem `app_error.log` cạnh `.exe` — file này ghi lại traceback đầy đủ của lỗi gần nhất.
 - **Tra cứu lịch sử hoạt động (không phải lỗi crash)**: thư mục `log/` cạnh `.exe` chứa file log theo ngày (`app_events.log`, tự xoay vòng, giữ 30 ngày) — ghi lại toàn bộ sự kiện/thông báo hệ thống (kết nối reader, đồng bộ server, kết quả quét...), tách biệt hoàn toàn với `app_error.log`.
 

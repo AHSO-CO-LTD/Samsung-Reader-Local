@@ -55,6 +55,12 @@ QLabel#labelTitle {
     font-style: italic;
 }
 
+QLabel#labelMachineLocation {
+    color: #F3F7F5;
+    border-left: 3px solid #79B792;
+    padding: 3px 8px;
+}
+
 QLabel#labelRuntimeBanner {
     background-color: #D88424;
     color: #FFFFFF;
@@ -373,8 +379,41 @@ QToolTip {
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="verticalLayoutMain">
-    <item>
+   <item>
      <layout class="QHBoxLayout" name="horizontalLayoutTop">
+      <item>
+       <widget class="QLabel" name="labelMachineLocation">
+        <property name="minimumSize">
+         <size>
+          <width>260</width>
+          <height>42</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>380</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="font">
+         <font>
+          <pointsize>11</pointsize>
+          <weight>75</weight>
+          <bold>true</bold>
+         </font>
+        </property>
+        <property name="text">
+         <string>Machine: -
+Line: -  |  Station: -</string>
+        </property>
+        <property name="textFormat">
+         <enum>Qt::PlainText</enum>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+        </property>
+       </widget>
+      </item>
       <item>
        <spacer name="horizontalSpacer">
         <property name="orientation">
@@ -394,8 +433,8 @@ QToolTip {
          <font>
           <pointsize>18</pointsize>
           <weight>75</weight>
-          <bold>true</bold>
           <italic>true</italic>
+          <bold>true</bold>
          </font>
         </property>
         <property name="text">
@@ -944,6 +983,9 @@ QToolTip {
                   <weight>75</weight>
                   <bold>true</bold>
                  </font>
+                </property>
+                <property name="editable">
+                 <bool>false</bool>
                 </property>
                </widget>
               </item>

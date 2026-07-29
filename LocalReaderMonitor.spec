@@ -12,9 +12,15 @@
 # datas: liệt kê đúng những gì app_paths.get_bundle_dir() + ui/main_window.py,
 # ui/config_window.py, ui/register_window.py, main.py cần đọc lúc chạy (.ui,
 # icon mũi tên combobox, icon logo .exe/cửa sổ, âm thanh OK/NG, schema.sql).
-# KHÔNG bundle 3 file config JSON thật (local_db_config.json/server_config.json/
-# readers_config.json) — các file đó do setup.ps1/app tự sinh cạnh .exe lúc
-# cài đặt/chạy thật, đưa vào đây sẽ rò rỉ mật khẩu DB của máy dev vào bản build.
+# KHÔNG bundle 4 file config JSON thật (local_db_config.json/server_config.json/
+# readers_config.json/hid_scanner_config.json) — các file đó do setup.ps1/app tự
+# sinh cạnh .exe lúc cài đặt/chạy thật, đưa vào đây sẽ rò rỉ cấu hình riêng máy
+# và mật khẩu DB của máy dev vào bản build.
+#
+# PyNaCl 1.5.0 nạp _cffi_backend gián tiếp từ nacl._sodium. hook-nacl của
+# _pyinstaller_hooks_contrib chỉ gom file nacl, không khai báo extension này là
+# hidden import. Phải liệt kê tường minh để build trên runner CI sạch không lỗi
+# ModuleNotFoundError lúc app import licensing/license_client.py.
 
 datas = [
     ("ui/main_window.ui", "ui"),
@@ -33,7 +39,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=[],
+    hiddenimports=["_cffi_backend"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

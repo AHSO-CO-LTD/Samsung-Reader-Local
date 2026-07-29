@@ -2,8 +2,17 @@
 <ui version="4.0">
  <class>RegisterWindow</class>
  <widget class="QDialog" name="RegisterWindow">
-  <property name="geometry"><rect><x>0</x><y>0</y><width>560</width><height>560</height></rect></property>
-  <property name="windowTitle"><string>Machine Registration</string></property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>560</width>
+    <height>683</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Machine Registration</string>
+  </property>
   <property name="styleSheet">
    <string notr="true">/*
  Dialog này KHÔNG có QGroupBox/QPushButton/QTextEdit riêng — các widget đó
@@ -44,58 +53,281 @@ QLineEdit:disabled {
   </property>
   <layout class="QVBoxLayout" name="verticalLayoutRoot">
    <item>
-    <widget class="QGroupBox" name="groupBoxIdentity">
-     <property name="title"><string>Machine Identity</string></property>
-     <layout class="QFormLayout" name="formLayoutIdentity">
-      <item row="0" column="0"><widget class="QLabel" name="labelSerialCaption"><property name="text"><string>Serial</string></property></widget></item>
-      <item row="0" column="1"><widget class="QLineEdit" name="lineEditSerial"><property name="readOnly"><bool>true</bool></property></widget></item>
-      <item row="1" column="0"><widget class="QLabel" name="labelUidCaption"><property name="text"><string>UID</string></property></widget></item>
-      <item row="1" column="1"><widget class="QLineEdit" name="lineEditUid"><property name="readOnly"><bool>true</bool></property></widget></item>
-     </layout>
-    </widget>
-   </item>
-   <item>
-    <widget class="QGroupBox" name="groupBoxStatus">
-     <property name="title"><string>Registration Status</string></property>
-     <layout class="QVBoxLayout" name="verticalLayoutStatus">
-      <item>
-       <widget class="QLabel" name="labelStatus">
-        <property name="minimumSize"><size><width>0</width><height>44</height></size></property>
-        <property name="font"><font><pointsize>16</pointsize><bold>true</bold></font></property>
-        <property name="alignment"><set>Qt::AlignCenter</set></property>
-        <property name="text"><string>-</string></property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLabel" name="labelStatusDetail">
-        <property name="wordWrap"><bool>true</bool></property>
-        <property name="alignment"><set>Qt::AlignCenter</set></property>
-        <property name="text"><string/></property>
-       </widget>
-      </item>
-      <item>
-       <layout class="QHBoxLayout" name="horizontalLayoutStatusButtons">
-        <item><widget class="QPushButton" name="pushButtonSendRequest"><property name="minimumHeight"><number>36</number></property><property name="text"><string>Send Registration Request</string></property></widget></item>
-        <item><widget class="QPushButton" name="pushButtonRefreshStatus"><property name="minimumHeight"><number>36</number></property><property name="text"><string>Refresh Status</string></property></widget></item>
-       </layout>
-      </item>
-     </layout>
+    <widget class="QTabWidget" name="tabWidgetMain">
+     <property name="enabled">
+      <bool>true</bool>
+     </property>
+     <property name="focusPolicy">
+      <enum>Qt::NoFocus</enum>
+     </property>
+     <property name="currentIndex">
+      <number>0</number>
+     </property>
+     <widget class="QWidget" name="tabRegistration">
+      <attribute name="title">
+       <string>Registration</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayoutRegistration">
+       <item>
+        <widget class="QGroupBox" name="groupBoxIdentity">
+         <property name="title">
+          <string>Machine Identity</string>
+         </property>
+         <layout class="QFormLayout" name="formLayoutIdentity">
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelSerialCaption">
+            <property name="text">
+             <string>Serial</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLineEdit" name="lineEditSerial">
+            <property name="readOnly">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelUidCaption">
+            <property name="text">
+             <string>UID</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QLineEdit" name="lineEditUid">
+            <property name="readOnly">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupBoxStatus">
+         <property name="title">
+          <string>Registration Status</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayoutStatus">
+          <item>
+           <widget class="QLabel" name="labelStatus">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>44</height>
+             </size>
+            </property>
+            <property name="font">
+             <font>
+              <pointsize>16</pointsize>
+              <weight>75</weight>
+              <bold>true</bold>
+             </font>
+            </property>
+            <property name="text">
+             <string>-</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="labelStatusDetail">
+            <property name="text">
+             <string/>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="horizontalLayoutStatusButtons">
+            <item>
+             <widget class="QPushButton" name="pushButtonSendRequest">
+              <property name="text">
+               <string>Send Registration Request</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="pushButtonRefreshStatus">
+              <property name="text">
+               <string>Refresh Status</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="tabLicense">
+      <attribute name="title">
+       <string>License</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayoutLicense">
+       <item>
+        <widget class="QGroupBox" name="groupBoxLicenseIdentity">
+         <property name="title">
+          <string>Machine License</string>
+         </property>
+         <layout class="QFormLayout" name="formLayoutLicenseIdentity">
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelMachineIdCaption">
+            <property name="text">
+             <string>Machine ID</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <layout class="QHBoxLayout" name="horizontalLayoutMachineId">
+            <item>
+             <widget class="QLineEdit" name="lineEditMachineId">
+              <property name="readOnly">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="pushButtonCopyMachineId">
+              <property name="text">
+               <string>Copy</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="0" colspan="2">
+           <widget class="QPushButton" name="pushButtonExportMachineInfo">
+            <property name="text">
+             <string>Xuất file thông tin máy (gửi cho bên cấp license)</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupBoxLicenseStatus">
+         <property name="title">
+          <string>License Status</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayoutLicenseStatus">
+          <item>
+           <widget class="QLabel" name="labelLicenseStatus">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>44</height>
+             </size>
+            </property>
+            <property name="font">
+             <font>
+              <pointsize>16</pointsize>
+              <weight>75</weight>
+              <bold>true</bold>
+             </font>
+            </property>
+            <property name="text">
+             <string>-</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="labelLicenseStatusDetail">
+            <property name="text">
+             <string/>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="labelLicenseInputHint">
+            <property name="text">
+             <string>Dán chuỗi license nhận được vào đây:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QTextEdit" name="textEditLicenseKey">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>70</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>90</height>
+             </size>
+            </property>
+            <property name="acceptRichText">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="pushButtonActivate">
+            <property name="text">
+             <string>Kích hoạt</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
     </widget>
    </item>
    <item>
     <widget class="QGroupBox" name="groupBoxProfile">
-     <property name="title"><string>Machine Profile</string></property>
+     <property name="title">
+      <string>Machine Profile</string>
+     </property>
      <layout class="QHBoxLayout" name="horizontalLayoutProfile">
       <item>
        <widget class="QLabel" name="labelProfileSyncHint">
-        <property name="minimumSize"><size><width>0</width><height>24</height></size></property>
-        <property name="text"><string>Profile/config only auto-updates on app startup.</string></property>
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>Profile/config only auto-updates on app startup.</string>
+        </property>
        </widget>
       </item>
       <item>
        <widget class="QPushButton" name="pushButtonSyncProfile">
-        <property name="minimumSize"><size><width>0</width><height>24</height></size></property>
-        <property name="text"><string>Sync Profile</string></property>
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>Sync Profile</string>
+        </property>
        </widget>
       </item>
      </layout>
@@ -103,24 +335,47 @@ QLineEdit:disabled {
    </item>
    <item>
     <widget class="QGroupBox" name="groupBoxSync">
-     <property name="title"><string>Data Sync</string></property>
+     <property name="title">
+      <string>Data Sync</string>
+     </property>
      <layout class="QHBoxLayout" name="horizontalLayoutSync">
       <item>
        <widget class="QLabel" name="labelPendingSync">
-        <property name="minimumSize"><size><width>0</width><height>24</height></size></property>
-        <property name="text"><string>Pending sync: -</string></property>
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>Pending sync: -</string>
+        </property>
        </widget>
       </item>
       <item>
        <widget class="QPushButton" name="pushButtonSyncNow">
-        <property name="minimumSize"><size><width>0</width><height>24</height></size></property>
-        <property name="text"><string>Sync Scan Data</string></property>
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>Sync Scan Data</string>
+        </property>
        </widget>
       </item>
       <item>
        <widget class="QPushButton" name="pushButtonCheckData">
-        <property name="minimumSize"><size><width>0</width><height>24</height></size></property>
-        <property name="text"><string>Check Data</string></property>
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>Check Data</string>
+        </property>
        </widget>
       </item>
      </layout>
@@ -128,11 +383,15 @@ QLineEdit:disabled {
    </item>
    <item>
     <widget class="QGroupBox" name="groupBoxLog">
-     <property name="title"><string>Log</string></property>
+     <property name="title">
+      <string>Log</string>
+     </property>
      <layout class="QVBoxLayout" name="verticalLayoutLog">
       <item>
        <widget class="QTextEdit" name="textEditLog">
-        <property name="readOnly"><bool>true</bool></property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
        </widget>
       </item>
      </layout>
@@ -142,11 +401,24 @@ QLineEdit:disabled {
     <layout class="QHBoxLayout" name="horizontalLayoutBottom">
      <item>
       <spacer name="horizontalSpacerBottom">
-       <property name="orientation"><enum>Qt::Horizontal</enum></property>
-       <property name="sizeHint"><size><width>40</width><height>20</height></size></property>
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
       </spacer>
      </item>
-     <item><widget class="QPushButton" name="pushButtonClose"><property name="minimumHeight"><number>34</number></property><property name="minimumWidth"><number>100</number></property><property name="text"><string>Close</string></property></widget></item>
+     <item>
+      <widget class="QPushButton" name="pushButtonClose">
+       <property name="text">
+        <string>Close</string>
+       </property>
+      </widget>
+     </item>
     </layout>
    </item>
   </layout>

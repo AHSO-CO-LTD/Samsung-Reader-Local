@@ -30,3 +30,7 @@ Thumbs.db
 
 # Test
 test_exe/
+
+# Tài liệu điều phối công việc giữa các dev/AI (plan/summary/review) — không
+# phải source code, không commit lên GitHub.
+cowork/

@@ -28,6 +28,8 @@ datas = [
     ("ui/register_window.ui", "ui"),
     ("ui/mapping_window.ui", "ui"),
     ("ui/reconcile_window.ui", "ui"),
+    ("ui/rework_window.ui", "ui"),
+    ("ui/plc_window.ui", "ui"),
     ("ui/icons", "ui/icons"),
     ("ui/logo", "ui/logo"),
     ("sound", "sound"),

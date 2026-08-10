@@ -1,0 +1,4 @@
+{
+    "title": "Set thời gian chờ nhận mã tối đa trước khi báo lỗi",
+    "content": "1.Nhấn nút 'Configure' ở panel bên phải. |2.Nhập thời gian chờ tối đa vào ô 'Timeout điền lỗi'. |Lưu ý: Thời gian chờ tính từ lúc nhận mã đầu tiên của sản phẩm, sau khi hết thời gian chờ, các mã chưa nhận được sẽ được báo lỗi là không quét được."
+}

@@ -12,3 +12,7 @@ python-socketio[client]==5.16.3
 
 # Verify chữ ký Ed25519 cho license kích hoạt cục bộ (licensing/license_client.py)
 pynacl==1.5.0
+
+# Giao tiếp RS232 với PLC Mitsubishi FX (tools/plc_rs232_test.py,
+# tools/plc_fx_dregister_test.py, và tính năng gửi tín hiệu NG cho PLC)
+pyserial==3.5

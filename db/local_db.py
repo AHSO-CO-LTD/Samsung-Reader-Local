@@ -9,6 +9,7 @@ db/local_db_config.json.
 import json
 import os
 import random
+import re
 import uuid
 from datetime import datetime, timedelta
 
@@ -66,7 +67,7 @@ def init_schema():
 
 
 def new_local_scan_id():
-    return f"LOCAL-{datetime.now():%Y%m%d%H%M%S}-{uuid.uuid4().hex[:8]}"
+    return f"LOCAL-{get_machine_name()}-{datetime.now():%Y%m%d%H%M%S}-{uuid.uuid4().hex[:8]}"
 
 
 def get_app_settings():
@@ -163,8 +164,16 @@ def add_local_notification(
 
 
 def get_latest_unread_notification():
-    """Bản ghi status='NEW' mới nhất — dùng cho banner MainWindow poll. None
-    nếu không có gì mới."""
+    """Bản ghi status='NEW' ưu tiên theo MỨC ĐỘ NGHIÊM TRỌNG trước, cùng mức
+    thì mới nhất — dùng cho banner MainWindow poll. None nếu không có gì mới.
+
+    Trước đây chỉ ORDER BY created_at DESC — khiến 1 thông báo hệ thống ít
+    quan trọng (vd "Đã đồng bộ cấu hình", "Server đã kết nối", chỉ vài giây
+    sau) đè mất banner đang hiện lý do NG/lỗi rework (ERROR) mà operator
+    chưa kịp đọc, dù ERROR đó mới tạo trước đó không lâu. CRITICAL/ERROR giờ
+    luôn được ưu tiên hiện trước INFO/WARNING bất kể thứ tự thời gian — các
+    bản NEW bị xếp sau vẫn còn nguyên (không bị đánh dấu đọc), sẽ tự hiện ở
+    lượt poll kế tiếp khi không còn gì mức cao hơn đang chờ."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -172,7 +181,16 @@ def get_latest_unread_notification():
                 """
                 SELECT id, noti_code, severity, title, message, status, created_at
                 FROM local_notifications WHERE status = 'NEW'
-                ORDER BY created_at DESC, id DESC LIMIT 1
+                ORDER BY
+                    CASE severity
+                        WHEN 'CRITICAL' THEN 4
+                        WHEN 'ERROR' THEN 3
+                        WHEN 'WARNING' THEN 2
+                        WHEN 'INFO' THEN 1
+                        ELSE 0
+                    END DESC,
+                    created_at DESC, id DESC
+                LIMIT 1
                 """
             )
             row = cur.fetchone()
@@ -424,6 +442,68 @@ def get_scan_counts():
     return {"total": total, "ok": ok, "ng": ng, "pending_sync": pending}
 
 
+def list_ng_unreworked_scans(chassis_code=None, vendor_char=None, days=2, limit=200):
+    """Danh sách NG đủ điều kiện rework — final_status='NG' loại các dòng đã
+    NG_REWORK, sync_status='SYNCED' đảm bảo lượt NG gốc đã submit xong xuôi
+    (tránh đụng claim_pending_scans_for_batch — hàm đó chỉ động tới
+    PENDING/FAILED_RETRYABLE, không bao giờ đụng dòng đã SYNCED), trong vòng
+    `days` ngày gần nhất (mặc định 2, yêu cầu nghiệp vụ — KHÔNG cho rework mã
+    quá cũ, không phải giá trị mặc định bộ lọc mà là điều kiện bắt buộc)."""
+    where = [
+        "local_status = 'NG'", "final_status = 'NG'", "sync_status = 'SYNCED'",
+        "full_chassis_code IS NOT NULL",
+        "scan_at >= now() - (%s || ' days')::interval",
+    ]
+    params = [days]
+    if chassis_code:
+        where.append("full_chassis_code = %s")
+        params.append(chassis_code)
+    if vendor_char:
+        where.append("full_vendor_char = %s")
+        params.append(vendor_char)
+    params.append(limit)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT r.local_scan_id, r.scan_at, r.full_chassis_code,
+                       r.full_vendor_char, v.vendor_name, r.full_led_code,
+                       r.local_ng_reason
+                FROM local_scan_records r
+                LEFT JOIN vendor_cache v ON v.vendor_char = r.full_vendor_char
+                WHERE {' AND '.join(where)}
+                ORDER BY r.scan_at DESC LIMIT %s
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+            cols = [d[0] for d in cur.description]
+    finally:
+        conn.close()
+    return [dict(zip(cols, row)) for row in rows]
+
+
+def get_led_slot_counts(local_scan_id):
+    """Đếm số lượng item theo led_slot của 1 bản ghi (NG hoặc bất kỳ) — dùng
+    để tự động khôi phục đúng Quantity LED BAR 1/2 khi bắt đầu rework 1 mã
+    NG cụ thể, thay vì để nguyên giá trị Quantity đang có sẵn trên màn hình
+    (vốn không liên quan gì tới phiên NG gốc, dễ gây quét thiếu/thừa so với
+    đúng cấu hình lúc NG xảy ra). Trả về dict {led_slot: count}, rỗng nếu
+    không có item nào (vd bản ghi NG do lỗi đọc mã, chưa kịp thu thập LED)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT led_slot, COUNT(*) FROM local_scan_led_items WHERE local_scan_id = %s GROUP BY led_slot",
+                (local_scan_id,),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return {slot: count for slot, count in rows}
+
+
 def get_command_local_status(server_command_id):
     """Đọc local_status hiện tại của 1 command đã lưu (None nếu chưa từng
     thấy) — dùng để dedupe khi commands/poll trả lại command cũ (poll không
@@ -507,9 +587,40 @@ def get_machine_code():
     return row[0] if row else "LOCAL01"
 
 
+def get_machine_name():
+    """machine_name của CHÍNH máy này (đã LÀM SẠCH — chỉ giữ chữ/số), đọc từ
+    machine_cache (đã upsert lúc apply_machine_config() — GET
+    /api/machines/config trả data.machine của đúng máy đang gọi). Dùng cho
+    new_local_scan_id() để mỗi ID mang theo tên máy dễ nhận diện.
+
+    Dữ liệu THẬT xác nhận machine_name KHÔNG chuẩn hoá sẵn như giả định ban
+    đầu — vẫn có dấu cách/ký tự đặc biệt (vd "Local scanner 02", "LED/QR
+    Scanner - Line A") — nên tự strip mọi ký tự không phải chữ/số trước khi
+    nhét vào ID (tránh dấu cách/gạch chéo lẫn vào chuỗi ID). Fallback
+    machine_code cho trường hợp hiếm gọi trước khi machine_cache từng sync
+    (scan chỉ mở khoá sau khi machine đã APPROVED + config đã sync ít nhất 1
+    lần nên trong thực tế luôn có)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT mc.machine_name FROM machine_cache mc
+                JOIN local_app_settings s ON s.machine_code = mc.machine_code
+                WHERE s.id = 1
+                """
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    raw_name = row[0] if row and row[0] else get_machine_code()
+    return re.sub(r"[^A-Za-z0-9]", "", raw_name) or get_machine_code()
+
+
 def record_full_scan(
     profile_id, qr_data, led_items, is_ok, ng_reason,
     window_days=DUPLICATE_WINDOW_DAYS, local_scan_id=None, scan_at=None,
+    local_status_override=None,
 ):
     """Ghi 1 phiên quét ĐẦY ĐỦ — 1 sản phẩm = 1 dòng local_scan_records +
     nhiều dòng local_scan_led_items (mỗi item LED BAR 1/2 đã thu thập trong
@@ -530,6 +641,10 @@ def record_full_scan(
         ĐÚNG giá trị này khi build payload POST /api/scans/submit (idempotency
         yêu cầu không đổi scan_at giữa lần ghi local và lần submit/retry).
         Mặc định tự tính now() nếu không truyền (gọi độc lập/test).
+    local_status_override: dùng cho lượt REWORK — ghi thẳng 'REWORK' vào cột
+        local_status thay vì suy từ is_ok (is_ok vẫn phải truyền True cho
+        lượt rework hợp lệ, vì logic kiểm tra trùng mã bên dưới CHỈ chạy khi
+        is_ok=True — 1 lượt rework vẫn cần qua đúng luồng kiểm tra trùng).
 
     Trả về (final_is_ok, final_ng_reason, first_scan_at_neu_trung, local_scan_id)
     — local_scan_id trả ra để nơi gọi dùng làm khoá idempotency khi submit."""
@@ -603,7 +718,7 @@ def record_full_scan(
                     qr_data.get("full_led_code"), qr_data.get("full_factory_code"),
                     qr_data.get("full_after_factory"), qr_data.get("chassis_scan_raw"),
                     json.dumps(full_code_json), json.dumps(led_scans_json),
-                    "OK" if is_ok else "NG", ng_reason, scan_at, sync_status,
+                    local_status_override or ("OK" if is_ok else "NG"), ng_reason, scan_at, sync_status,
                 ),
             )
 
@@ -679,17 +794,34 @@ def apply_scan_submit_result(local_scan_id, response, conn=None):
     apply_sync_batch_result): dùng chung connection của caller, KHÔNG tự
     commit/đóng — caller chịu trách nhiệm transaction cho cả loạt, tránh mở
     lại kết nối DB tới hàng trăm lần trên GUI thread khi xử lý 1 response
-    batch."""
+    batch.
+
+    Trả về True nếu bản ghi `local_scan_id` VẪN CÒN tồn tại sau khi hàm này
+    chạy xong, False nếu vừa bị xoá hẳn (nhánh SERVER_DUPLICATE cho rework).
+    BẮT BUỘC phải kiểm tra giá trị trả về này ở caller nào còn thao tác tiếp
+    với đúng local_scan_id đó trong CÙNG connection/transaction (vd
+    apply_sync_batch_result chèn thêm 1 dòng sync_batch_items có FK tới
+    local_scan_records ngay sau khi gọi hàm này — chèn vào 1 local_scan_id
+    vừa bị xoá sẽ vi phạm FK, đã tự vấp phải lỗi này thật, xem app_error.log)."""
     code = response.get("code")
     data = response.get("data") or {}
+    is_rework = local_scan_id.startswith("RW-")
     if code == "SERVER_OK":
         server_status, final_status, final_ng_reason = "OK", "OK", None
+    elif code == "LOCAL_REWORK_SAVED":
+        server_status, final_status, final_ng_reason = "OK", "REWORK", data.get("ng_reason")
     elif code == "SERVER_DUPLICATE":
+        if is_rework:
+            # Theo docs/13 mục 5.2: server KHÔNG lưu gì cho lượt rework bị
+            # trùng — local cũng không giữ lại dấu vết nào, đúng nguyên tắc
+            # "chỉ tồn tại nếu kết cục cuối là REWORK". Xoá hẳn thay vì UPDATE.
+            delete_rework_attempt(local_scan_id, conn=conn)
+            return False
         server_status, final_status, final_ng_reason = "NG", "NG", "SERVER_DUPLICATE"
     elif code == "LOCAL_NG_SAVED":
         server_status, final_status, final_ng_reason = "SKIPPED", "NG", data.get("ng_reason")
     else:
-        return
+        return True
     now = datetime.now().astimezone()
     owns_conn = conn is None
     if owns_conn:
@@ -707,10 +839,50 @@ def apply_scan_submit_result(local_scan_id, response, conn=None):
                 """,
                 (
                     code, response.get("message"), data.get("server_scan_id"),
-                    data.get("first_scan_record_id"), server_status,
-                    final_status, final_ng_reason, now, local_scan_id,
+                    data.get("first_scan_record_id") or data.get("reworked_scan_record_id"),
+                    server_status, final_status, final_ng_reason, now, local_scan_id,
                 ),
             )
+            # Đánh dấu NG gốc đã rework — nằm NGAY TRONG hàm này (không phải
+            # tầng UI) để chạy đúng bất kể lúc phản hồi về, operator có còn ở
+            # màn hình rework hay đã thoát từ lâu, hay phản hồi về qua batch
+            # retry nền (apply_sync_batch_result cũng gọi hàm này, cùng conn).
+            # CHỈ đổi final_status — local_status/local_ng_reason/scan_at của
+            # NG gốc giữ nguyên vĩnh viễn, đúng nguyên bản lịch sử.
+            if code == "LOCAL_REWORK_SAVED":
+                old_id = local_scan_id[len("RW-"):]
+                cur.execute(
+                    "UPDATE local_scan_records SET final_status = 'NG_REWORK', updated_at = now() "
+                    "WHERE local_scan_id = %s AND local_status = 'NG'",
+                    (old_id,),
+                )
+        if owns_conn:
+            conn.commit()
+    finally:
+        if owns_conn:
+            conn.close()
+    return True
+
+
+def delete_rework_attempt(local_scan_id, conn=None):
+    """Xoá 1 lượt REWORK KHÔNG thành công (server báo trùng, lỗi nghiệp vụ
+    vĩnh viễn REWORK_SOURCE_*, hoặc trùng mã CỤC BỘ tự phát hiện trước khi
+    kịp gửi server) — theo đúng nguyên tắc "1 bản ghi RW-... chỉ được phép
+    tồn tại nếu kết cục cuối cùng là REWORK". Mọi kết cục khác không để lại
+    dấu vết nào, giống hệt cách 1 lượt quét thường vẫn-NG không được lưu.
+    local_scan_led_items tự xoá theo (ON DELETE CASCADE từ
+    local_scan_records). Dọn thêm local_duplicate_keys nếu có — bản ghi vừa
+    xoá có thể đã claim mã này làm first_local_scan_id, không dọn sẽ khoá
+    nhầm mã đó cho các lần quét hợp lệ khác trong cùng ngày/profile.
+
+    conn: xem docstring apply_scan_submit_result — cùng quy ước."""
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM local_duplicate_keys WHERE first_local_scan_id = %s", (local_scan_id,))
+            cur.execute("DELETE FROM local_scan_records WHERE local_scan_id = %s", (local_scan_id,))
         if owns_conn:
             conn.commit()
     finally:
@@ -720,11 +892,25 @@ def apply_scan_submit_result(local_scan_id, response, conn=None):
 
 def mark_scan_submit_failed(local_scan_id, error_code, error_message, blocked=False, conn=None):
     """Ghi nhận submit thất bại. blocked=True cho lỗi nghiệp vụ/payload
-    không nên blind-retry (PROFILE_NOT_FOUND, payload bị server bác...) ->
-    FAILED_BLOCKED. blocked=False cho lỗi mạng thuần (còn cơ hội retry ở
-    bước sync/batches/submit sau) -> FAILED_RETRYABLE.
+    không nên blind-retry (PROFILE_NOT_FOUND, payload bị server bác,
+    REWORK_SOURCE_*...) -> FAILED_BLOCKED. blocked=False cho lỗi mạng thuần
+    (còn cơ hội retry ở bước sync/batches/submit sau) -> FAILED_RETRYABLE.
 
-    conn: xem docstring apply_scan_submit_result — cùng quy ước."""
+    Lượt REWORK (`local_scan_id` bắt đầu "RW-") bị lỗi blocked = lỗi nghiệp
+    vụ vĩnh viễn (REWORK_SOURCE_INVALID/NOT_FOUND/NOT_NG) — không thể tự sửa
+    bằng cách thử lại, và theo đúng nguyên tắc "chỉ tồn tại nếu kết cục cuối
+    là REWORK", xoá hẳn thay vì để kẹt ở final_status mặc định PENDING_SERVER
+    mãi mãi.
+
+    conn: xem docstring apply_scan_submit_result — cùng quy ước.
+
+    Trả về True nếu bản ghi VẪN CÒN tồn tại sau khi hàm này chạy xong, False
+    nếu vừa bị xoá hẳn (nhánh blocked cho rework) — cùng lý do/áp dụng như
+    apply_scan_submit_result, bắt buộc caller nào thao tác tiếp cùng
+    local_scan_id trong cùng transaction phải kiểm tra giá trị này trước."""
+    if blocked and local_scan_id.startswith("RW-"):
+        delete_rework_attempt(local_scan_id, conn=conn)
+        return False
     owns_conn = conn is None
     if owns_conn:
         conn = get_connection()
@@ -744,6 +930,7 @@ def mark_scan_submit_failed(local_scan_id, error_code, error_message, blocked=Fa
     finally:
         if owns_conn:
             conn.close()
+    return True
 
 
 ######################################################################
@@ -873,15 +1060,29 @@ def apply_sync_batch_result(batch_code, response):
                 code = item.get("code")
 
                 if success:
-                    apply_scan_submit_result(local_scan_id, item, conn=conn)
-                    if code == "SERVER_OK":
+                    record_still_exists = apply_scan_submit_result(local_scan_id, item, conn=conn)
+                    if code in ("SERVER_OK", "LOCAL_REWORK_SAVED"):
                         total_ok += 1
                     else:
                         total_ng += 1
                 else:
-                    mark_scan_submit_failed(local_scan_id, code, item.get("message"), blocked=True, conn=conn)
+                    record_still_exists = mark_scan_submit_failed(
+                        local_scan_id, code, item.get("message"), blocked=True, conn=conn
+                    )
                     total_failed += 1
                     failed_items.append({"local_scan_id": local_scan_id, "code": code, "message": item.get("message")})
+
+                if not record_still_exists:
+                    # Lượt REWORK vừa bị xoá hẳn (delete_rework_attempt, xem
+                    # apply_scan_submit_result/mark_scan_submit_failed) — KHÔNG
+                    # còn gì để ghi vào sync_batch_items nữa: cột local_scan_id
+                    # của bảng đó có FK REFERENCES local_scan_records, chèn vào
+                    # 1 local_scan_id vừa xoá sẽ vi phạm FK (đã tự vấp lỗi
+                    # thật ForeignKeyViolation, xem app_error.log — bug thật
+                    # đã sửa tại đây). Bỏ qua bản ghi audit cho item này là
+                    # đúng, khớp nguyên tắc "rework không thành công thì không
+                    # để lại dấu vết nào".
+                    continue
 
                 cur.execute(
                     """

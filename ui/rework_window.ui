@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>RewokWindow</class>
+ <widget class="QDialog" name="RewokWindow">
+  <property name="geometry"><rect><x>0</x><y>0</y><width>1080</width><height>580</height></rect></property>
+  <property name="windowTitle"><string>Rework sản phẩm NG</string></property>
+  <property name="styleSheet">
+   <string notr="true">/*
+ Cùng convention với reconcile_window.ui/register_window.ui — kế thừa theme
+ từ MainWindow qua cây cha-con, chỉ bổ sung phần MainWindow không có.
+ */
+QDialog {
+    background-color: #1F403E;
+}
+
+QLabel {
+    background-color: transparent;
+    color: #F3F7F5;
+}</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayoutRoot">
+   <item>
+    <widget class="QLabel" name="labelTitle">
+     <property name="font"><font><pointsize>12</pointsize><bold>true</bold></font></property>
+     <property name="text"><string>Danh sách NG chưa rework (trong 2 ngày gần nhất)</string></property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="horizontalLayoutFilter">
+     <item>
+      <widget class="QLabel" name="labelFilterChassis">
+       <property name="text"><string>Mã hàng:</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="comboBoxFilterChassis">
+       <property name="minimumHeight"><number>30</number></property>
+       <property name="minimumWidth"><number>160</number></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="labelFilterVendor">
+       <property name="text"><string>Vendor:</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="comboBoxFilterVendor">
+       <property name="minimumHeight"><number>30</number></property>
+       <property name="minimumWidth"><number>140</number></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="pushButtonApplyFilter">
+       <property name="minimumHeight"><number>30</number></property>
+       <property name="text"><string>Lọc</string></property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="horizontalSpacerFilter">
+       <property name="orientation"><enum>Qt::Horizontal</enum></property>
+       <property name="sizeHint"><size><width>40</width><height>20</height></size></property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="pushButtonRefresh">
+       <property name="minimumHeight"><number>30</number></property>
+       <property name="text"><string>Làm mới</string></property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="horizontalLayoutSelectAll">
+     <item>
+      <widget class="QPushButton" name="pushButtonSelectAll">
+       <property name="minimumHeight"><number>28</number></property>
+       <property name="text"><string>Chọn tất cả</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="pushButtonDeselectAll">
+       <property name="minimumHeight"><number>28</number></property>
+       <property name="text"><string>Bỏ chọn tất cả</string></property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="horizontalSpacerSelectAll">
+       <property name="orientation"><enum>Qt::Horizontal</enum></property>
+       <property name="sizeHint"><size><width>40</width><height>20</height></size></property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QTableWidget" name="tableWidgetNgList">
+     <property name="editTriggers"><enum>QAbstractItemView::NoEditTriggers</enum></property>
+     <property name="selectionBehavior"><enum>QAbstractItemView::SelectRows</enum></property>
+     <column><property name="text"><string>Chọn</string></property></column>
+     <column><property name="text"><string>Thời gian</string></property></column>
+     <column><property name="text"><string>Mã hàng</string></property></column>
+     <column><property name="text"><string>Vendor</string></property></column>
+     <column><property name="text"><string>Lý do NG</string></property></column>
+     <column><property name="text"><string>Local scan id</string></property></column>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="horizontalLayoutBottom">
+     <item>
+      <widget class="QPushButton" name="pushButtonStartRework">
+       <property name="minimumHeight"><number>36</number></property>
+       <property name="font"><font><bold>true</bold></font></property>
+       <property name="text"><string>Bắt đầu Rework (0 mã)</string></property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="horizontalSpacerBottom">
+       <property name="orientation"><enum>Qt::Horizontal</enum></property>
+       <property name="sizeHint"><size><width>40</width><height>20</height></size></property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="pushButtonClose">
+       <property name="minimumHeight"><number>34</number></property>
+       <property name="minimumWidth"><number>100</number></property>
+       <property name="text"><string>Close</string></property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

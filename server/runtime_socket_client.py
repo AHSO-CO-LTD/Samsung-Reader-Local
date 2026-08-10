@@ -142,7 +142,9 @@ class MachineRuntimeClient(QObject):
     # API công khai — gọi từ MainWindow (GUI thread)
     ######################################################################
 
-    def start_session(self, *, machine_code, serial, uid, app_version, local_db_version, host, port):
+    def start_session(
+        self, *, machine_code, serial, uid, app_version, local_db_version, host, port
+    ):
         """Gọi đúng 1 lần/lần chạy app — lúc máy đạt READY (có machine_code).
         KHÔNG tự gọi lại giữa chừng dù trạng thái READY tự đổi qua lại — đó
         là trách nhiệm của caller (xem MainWindow._runtime_session_started)."""
@@ -180,7 +182,9 @@ class MachineRuntimeClient(QObject):
             payload = self._build_update_payload_locked()
         self._emit("runtime:update", payload)
 
-    def record_scan_result(self, *, product_code, profile_id, is_ok, last_code, local_scan_id, pending_sync):
+    def record_scan_result(
+        self, *, product_code, profile_id, is_ok, last_code, local_scan_id, pending_sync
+    ):
         """Gọi mỗi khi 1 phiên quét (LED bar + QR bottom) chốt xong OK/NG."""
         with self._lock:
             # Đường dự phòng: nếu Chassis Rear đã đúng sẵn từ đầu (vd mặc
@@ -394,7 +398,9 @@ class MachineRuntimeClient(QObject):
             with self._lock:
                 first_time = not self._ever_accepted
                 self._ever_accepted = True
-                start_payload = self._build_start_payload_locked() if first_time else None
+                start_payload = (
+                    self._build_start_payload_locked() if first_time else None
+                )
             if first_time:
                 self.runtimeConnected.emit()
                 self._emit("runtime:start", start_payload)
@@ -402,5 +408,7 @@ class MachineRuntimeClient(QObject):
                 self.runtimeReconnected.emit()
                 self.emit_snapshot()
         else:
-            message = data.get("message") or "Machine runtime bị server từ chối định danh."
+            message = (
+                data.get("message") or "Machine runtime bị server từ chối định danh."
+            )
             self.runtimeBlocked.emit(message)

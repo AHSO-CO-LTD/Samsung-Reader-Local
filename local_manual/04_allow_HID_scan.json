@@ -1,0 +1,4 @@
+{
+    "title": "Bật máy quét mã vạch cầm tay (HID)",
+    "content": "1.Nhấn nút 'Configure' ở panel bên phải. |2.Tích vào ô 'Bật máy quét mã vạch cầm tay (HID)'. |Lưu ý: Khi bật chế độ này thì không chạy phần mềm Keyence vì sẽ gây xung đột dẫn đến reader trả về kết quả trùng lặp."
+}

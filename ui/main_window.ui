@@ -407,6 +407,24 @@ Line: -  |  Station: -</string>
        </widget>
       </item>
       <item>
+       <widget class="QLabel" name="labelAppVersion">
+        <property name="font">
+         <font>
+          <pointsize>8</pointsize>
+         </font>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">color: #6E8985;</string>
+        </property>
+        <property name="text">
+         <string>v-</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignBottom</set>
+        </property>
+       </widget>
+      </item>
+      <item>
        <spacer name="horizontalSpacer">
         <property name="orientation">
          <enum>Qt::Horizontal</enum>

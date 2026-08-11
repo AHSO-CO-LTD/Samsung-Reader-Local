@@ -18,8 +18,8 @@ class PlcWindow(QDialog):
         uic.loadUi(os.path.join(get_bundle_dir(), "ui", "plc_window.ui"), self)
         self._worker = worker
         self._pending = {}
-        self._load_fields()
         self._refresh_ports()
+        self._load_fields()
         self.pushButtonRefreshPorts.clicked.connect(self._refresh_ports)
         self.pushButtonTestRead.clicked.connect(self._test_read)
         self.pushButtonTestWrite.clicked.connect(self._test_write)
@@ -33,7 +33,7 @@ class PlcWindow(QDialog):
     def _load_fields(self):
         c = load_plc_config()
         self.checkBoxEnabled.setChecked(bool(c["enabled"]))
-        self.comboBoxPort.setCurrentText(c.get("port", ""))
+        self._set_port(c.get("port", ""))
         self.spinBoxDRegister.setValue(int(c.get("d_register", 0)))
         self.spinBoxNgValue.setValue(int(c.get("ng_value", 1)))
         self.radioPulse.setChecked(c.get("mode", "pulse") == "pulse")
@@ -49,9 +49,18 @@ class PlcWindow(QDialog):
         self.comboBoxPort.clear()
         ports = list_ports.comports() if list_ports is not None else []
         self.comboBoxPort.addItems([p.device for p in ports])
-        if current and self.comboBoxPort.findText(current) < 0:
-            self.comboBoxPort.addItem(current)
-        self.comboBoxPort.setCurrentText(current)
+        self._set_port(current)
+
+    def _set_port(self, port):
+        # Cong da luu (hoac dang chon) co the khong nam trong danh sach
+        # cong dang cam hien tai (vd PLC chua cam luc mo cua so) — them
+        # thu cong truoc khi chon, khong thi setCurrentText tren combobox
+        # khong-editable se khong co tac dung gi (roi vi mac dinh ve item
+        # dau tien = cong nho nhat, day chinh la bug da gap: mo lai cua so
+        # PLC luon hien cong nho nhat thay vi cong da luu).
+        if port and self.comboBoxPort.findText(port) < 0:
+            self.comboBoxPort.addItem(port)
+        self.comboBoxPort.setCurrentText(port)
 
     def _mode_changed(self, pulse):
         self.spinBoxPulseDuration.setEnabled(bool(pulse))

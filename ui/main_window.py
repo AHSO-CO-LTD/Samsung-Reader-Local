@@ -200,7 +200,7 @@ NOTIFICATION_SEVERITY_TEXT_COLORS = {
     "_default": "#D8E9E4",  # màu chữ mặc định giống log cũ
 }
 
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.8.1"
 # Ngày PHÁT HÀNH bản build này (không phải hôm nay) — dùng để check cửa sổ
 # update_until của license (xem licensing/license_client.py:verify_license).
 # Cập nhật thủ công mỗi lần release thật, không tự tính date.today().
@@ -368,6 +368,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         uic.loadUi(UI_PATH, self)
         self.setStyleSheet(self.styleSheet() + ARROW_ICONS_STYLESHEET)
+        self.labelAppVersion.setText(f"v{APP_VERSION}")
 
         # Giãn đều theo tỷ lệ khi cửa sổ lớn/nhỏ hơn 1920x1080 thiết kế gốc —
         # mặc định .ui KHÔNG có stretch factor nào nên Qt không biết phân
@@ -744,7 +745,9 @@ class MainWindow(QMainWindow):
         self._plc_connected = connected
         self._update_plc_status(connected)
         if was_connected is True and not connected and self._plc_config.get("enabled"):
-            add_local_notification("PLC_DISCONNECTED", "ERROR", "PLC mất kết nối", "Không thể kết nối PLC.")
+            add_local_notification(
+                "PLC_DISCONNECTED", "ERROR", "PLC mất kết nối", "Không thể kết nối PLC."
+            )
             self._poll_latest_notification()
 
     def _on_plc_command_succeeded(self, kind, correlation_id, result):
@@ -753,12 +756,33 @@ class MainWindow(QMainWindow):
 
     def _on_plc_command_failed(self, kind, correlation_id, message):
         if kind == "ng_signal":
-            add_local_notification("PLC_SIGNAL_FAILED", "ERROR", "PLC không nhận tín hiệu NG", message)
+            add_local_notification(
+                "PLC_SIGNAL_FAILED", "ERROR", "PLC không nhận tín hiệu NG", message
+            )
             self._poll_latest_notification()
-            self._append_log(f"[{self._now()}] [PLC] Gửi tín hiệu NG thất bại: {message}")
+            self._append_log(
+                f"[{self._now()}] [PLC] Gửi tín hiệu NG thất bại: {message}"
+            )
+
+    def _send_plc_ok_reset(self):
+        """Đưa thanh ghi D về giá trị OK ở chế độ Trạng thái (state) — chỉ có
+        ý nghĩa khi mode="state" (mode "pulse" đã tự về 0 qua QTimer trong
+        _send_plc_ng). Dùng chung cho cả luồng quét thường (SERVER_OK, xem
+        _reflect_scan_submit_ui) VÀ rework thành công (LOCAL_REWORK_SAVED,
+        xem _handle_rework_submit_result) — thiếu ở nhánh rework là bug thật
+        đã gặp trên production: gửi NG cho PLC lúc rework NG/SERVER_DUPLICATE
+        nhưng không bao giờ gửi lại OK lúc rework thành công, khiến PLC kẹt
+        mãi ở trạng thái NG dù sản phẩm đã sửa xong."""
+        if self._plc_config.get("enabled") and self._plc_config.get("mode") == "state":
+            self._plc_worker.send_ok_reset()
 
     def _plc_enabled_for(self, rework=False):
-        return bool(self._plc_config.get("enabled") and self._plc_config.get("send_on_rework_ng" if rework else "send_on_normal_ng"))
+        return bool(
+            self._plc_config.get("enabled")
+            and self._plc_config.get(
+                "send_on_rework_ng" if rework else "send_on_normal_ng"
+            )
+        )
 
     def _send_plc_ng(self, rework=False):
         if not self._plc_enabled_for(rework):
@@ -3036,8 +3060,14 @@ class MainWindow(QMainWindow):
         # rework duoc that (da ghi DB thanh cong + co full_chassis_code —
         # NG kieu SCAN_FAILED/chua chon Chassis Rear thi khong co gi de
         # rework, giu nguyen hanh vi cu cho la cho Reset thu cong).
-        if not final_is_ok and local_scan_id is not None and qr_data.get("full_chassis_code"):
-            self._offer_instant_rework(local_scan_id, qr_data["full_chassis_code"], final_reason)
+        if (
+            not final_is_ok
+            and local_scan_id is not None
+            and qr_data.get("full_chassis_code")
+        ):
+            self._offer_instant_rework(
+                local_scan_id, qr_data["full_chassis_code"], final_reason
+            )
 
     def _offer_instant_rework(self, local_scan_id, full_chassis_code, ng_reason):
         """Hoi operator co muon rework NGAY mã vừa quét hay không — Có: vào
@@ -3092,13 +3122,15 @@ class MainWindow(QMainWindow):
         _toggle_blink()
         answer = box.exec_()
         if answer == QMessageBox.Yes:
-            self._start_rework_queue([
-                {
-                    "local_scan_id": local_scan_id,
-                    "full_chassis_code": full_chassis_code,
-                    "local_ng_reason": ng_reason,
-                }
-            ])
+            self._start_rework_queue(
+                [
+                    {
+                        "local_scan_id": local_scan_id,
+                        "full_chassis_code": full_chassis_code,
+                        "local_ng_reason": ng_reason,
+                    }
+                ]
+            )
         else:
             self._clear_session()
 
@@ -3407,6 +3439,7 @@ class MainWindow(QMainWindow):
         "hiện rồi mất ngay" đã gặp."""
         old_id = local_scan_id[len("RW-") :]
         if code == "LOCAL_REWORK_SAVED":
+            self._send_plc_ok_reset()
             self._apply_rework_result_color(True)
             self.set_result_status("ok")
             add_local_notification(
@@ -3475,8 +3508,7 @@ class MainWindow(QMainWindow):
         if generation != self._session_generation:
             return
         if code == "SERVER_OK":
-            if self._plc_config.get("enabled") and self._plc_config.get("mode") == "state":
-                self._plc_worker.send_ok_reset()
+            self._send_plc_ok_reset()
             _apply_item_result_color(item, RESULT_ITEM_COLORS[True])
             self.set_result_status("ok")
             add_local_notification(
@@ -3559,15 +3591,9 @@ class MainWindow(QMainWindow):
         self._result_blink_timer.setInterval(RESULT_BLINK_INTERVAL_MS)
         self._result_blink_timer.timeout.connect(self._toggle_result_blink)
 
-        # Dùng playlist 2 item giống nhau thay vì tự canh duration MP3 bằng
-        # timer — Qt tự chuyển bài đúng lúc file thứ nhất kết thúc.
-        self._result_audio_playlist = QMediaPlaylist(self)
-        self._result_audio_playlist.setPlaybackMode(QMediaPlaylist.Sequential)
-        self._result_audio_player = QMediaPlayer(self)
-        self._result_audio_player.setPlaylist(self._result_audio_playlist)
         self._reported_result_audio_errors = set()
         self._reported_missing_sound_paths = set()
-        self._result_audio_player.error.connect(self._on_result_audio_error)
+        self._create_result_audio_player()
 
     def set_result_status(self, result):
         """result: None ("-"), "ok", "ng", hoặc "pending" (đã pass local,
@@ -3635,6 +3661,22 @@ class MainWindow(QMainWindow):
         self._result_audio_playlist.clear()
         self._result_blink_visible = True
 
+    def _create_result_audio_player(self):
+        """Dựng (hoặc DỰNG LẠI, xem _on_result_audio_error) player phát âm
+        OK/NG. Tách riêng thành hàm để gọi lại được khi player cũ bị lỗi —
+        QMediaPlayer trên Windows (backend DirectShow) đôi khi gặp
+        ResourceError (error 1) tạm thời do trục trặc tầng driver âm thanh,
+        và KHÔNG tự phục hồi được sau đó — bug thật đã gặp: mất âm thanh
+        vĩnh viễn cho tới khi restart cả app. Tạo lại player mới đúng lúc
+        lỗi xảy ra giải quyết được mà không cần restart."""
+        # Dùng playlist 2 item giống nhau thay vì tự canh duration MP3 bằng
+        # timer — Qt tự chuyển bài đúng lúc file thứ nhất kết thúc.
+        self._result_audio_playlist = QMediaPlaylist(self)
+        self._result_audio_playlist.setPlaybackMode(QMediaPlaylist.Sequential)
+        self._result_audio_player = QMediaPlayer(self)
+        self._result_audio_player.setPlaylist(self._result_audio_playlist)
+        self._result_audio_player.error.connect(self._on_result_audio_error)
+
     def _on_result_audio_error(self, error):
         if error == QMediaPlayer.NoError:
             return
@@ -3643,10 +3685,21 @@ class MainWindow(QMainWindow):
             or f"QMediaPlayer error {int(error)}"
         )
         key = (int(error), message)
-        if key in self._reported_result_audio_errors:
-            return
-        self._reported_result_audio_errors.add(key)
-        self._append_log(f"[{self._now()}] [Âm thanh] {message}")
+        if key not in self._reported_result_audio_errors:
+            self._reported_result_audio_errors.add(key)
+            self._append_log(
+                f"[{self._now()}] [Âm thanh] {message} — tự tạo lại player để "
+                "phục hồi phát âm thanh."
+            )
+        # Player cu (self._result_audio_player) thuong bi "ket" sau loi nay,
+        # khong tu phat lai duoc — tao han player MOI thay vi co goi
+        # stop()/setMedia() lai tren object da loi (khong dang tin cay).
+        # deleteLater() thay vi xoa/gan None ngay — object cu co the van con
+        # dang trong 1 lenh goi callback dang chay do (chinh error signal
+        # nay), destroy ngay lap tuc co the crash.
+        self._result_audio_player.deleteLater()
+        self._result_audio_playlist.deleteLater()
+        self._create_result_audio_player()
 
     ######################################################################
     # Banner notification (thay chỗ Log cũ) — đọc lại local_notifications,

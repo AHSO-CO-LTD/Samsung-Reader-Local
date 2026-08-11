@@ -93,8 +93,12 @@ class PlcWorker(QObject):
         except Exception as exc:
             self._set_connected(False)
             raise PlcCommError(f"Không mở được {config['port']}: {exc}") from exc
-        self._errors = 0
-        self._set_connected(True)
+        # KHONG goi _set_connected(True) o day — mo cong COM thanh cong chi
+        # co nghia he dieu hanh cho phep truy cap cong, KHONG co nghia PLC
+        # that su dang phan hoi (bug that: PLC khong ket noi/khong tra loi
+        # van hien "Da ket noi" vi mo cong luon thanh cong). "Connected"
+        # chi duoc coi la dung sau khi 1 lenh giao tiep THAT SU thanh cong —
+        # xem run(), goi _set_connected(True) o nhanh commandSucceeded.
         return self._serial
 
     def _execute(self, kind, payload, config):
@@ -130,6 +134,7 @@ class PlcWorker(QObject):
             try:
                 result = self._execute(kind, payload, self._snapshot())
                 self._errors = 0
+                self._set_connected(True)
                 self.commandSucceeded.emit(kind, correlation_id, result)
             except Exception as exc:
                 self._errors += 1

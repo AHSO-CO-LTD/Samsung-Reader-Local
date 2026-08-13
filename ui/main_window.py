@@ -200,7 +200,7 @@ NOTIFICATION_SEVERITY_TEXT_COLORS = {
     "_default": "#D8E9E4",  # màu chữ mặc định giống log cũ
 }
 
-APP_VERSION = "0.8.1"
+APP_VERSION = "0.8.2"
 # Ngày PHÁT HÀNH bản build này (không phải hôm nay) — dùng để check cửa sổ
 # update_until của license (xem licensing/license_client.py:verify_license).
 # Cập nhật thủ công mỗi lần release thật, không tự tính date.today().

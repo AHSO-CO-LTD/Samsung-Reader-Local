@@ -25,6 +25,7 @@ class PlcWindow(QDialog):
         self.pushButtonTestWrite.clicked.connect(self._test_write)
         self.pushButtonSave.clicked.connect(self._save)
         self.radioPulse.toggled.connect(self._mode_changed)
+        self.radioConnectionEthernet.toggled.connect(self._connection_type_changed)
         worker.connectionChanged.connect(self._on_connection)
         worker.commandSucceeded.connect(self._on_success)
         worker.commandFailed.connect(self._on_failed)
@@ -34,6 +35,11 @@ class PlcWindow(QDialog):
         c = load_plc_config()
         self.checkBoxEnabled.setChecked(bool(c["enabled"]))
         self._set_port(c.get("port", ""))
+        self.lineEditHost.setText(c.get("host", ""))
+        self.spinBoxTcpPort.setValue(int(c.get("tcp_port", 0) or 0))
+        is_ethernet = c.get("connection_type", "serial") == "ethernet"
+        self.radioConnectionEthernet.setChecked(is_ethernet)
+        self.radioConnectionSerial.setChecked(not is_ethernet)
         self.spinBoxDRegister.setValue(int(c.get("d_register", 0)))
         self.spinBoxNgValue.setValue(int(c.get("ng_value", 1)))
         self.radioPulse.setChecked(c.get("mode", "pulse") == "pulse")
@@ -43,6 +49,7 @@ class PlcWindow(QDialog):
         self.checkBoxNormalNg.setChecked(bool(c.get("send_on_normal_ng", True)))
         self.checkBoxReworkNg.setChecked(bool(c.get("send_on_rework_ng", True)))
         self._mode_changed(self.radioPulse.isChecked())
+        self._connection_type_changed(is_ethernet)
 
     def _refresh_ports(self):
         current = self.comboBoxPort.currentText()
@@ -66,10 +73,19 @@ class PlcWindow(QDialog):
         self.spinBoxPulseDuration.setEnabled(bool(pulse))
         self.spinBoxOkReset.setEnabled(not pulse)
 
+    def _connection_type_changed(self, is_ethernet):
+        for widget in (self.labelPortCaption, self.comboBoxPort, self.pushButtonRefreshPorts):
+            widget.setVisible(not is_ethernet)
+        for widget in (self.labelHostCaption, self.lineEditHost, self.labelTcpPortCaption, self.spinBoxTcpPort):
+            widget.setVisible(is_ethernet)
+
     def _current_form_config(self):
         return {
             "enabled": self.checkBoxEnabled.isChecked(),
+            "connection_type": "ethernet" if self.radioConnectionEthernet.isChecked() else "serial",
             "port": self.comboBoxPort.currentText().strip(),
+            "host": self.lineEditHost.text().strip(),
+            "tcp_port": self.spinBoxTcpPort.value(),
             "d_register": self.spinBoxDRegister.value(),
             "ng_value": self.spinBoxNgValue.value(),
             "mode": "pulse" if self.radioPulse.isChecked() else "state",

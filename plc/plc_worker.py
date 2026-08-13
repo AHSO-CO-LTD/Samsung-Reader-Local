@@ -5,7 +5,15 @@ import uuid
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from .plc_client import PlcCommError, open_serial, read_register, write_register
+from .plc_client import (
+    PlcCommError,
+    open_serial,
+    open_tcp,
+    read_register,
+    read_register_mc,
+    write_register,
+    write_register_mc,
+)
 
 
 class PlcWorker(QObject):
@@ -19,7 +27,7 @@ class PlcWorker(QObject):
         self._stop_event = threading.Event()
         self._config_lock = threading.Lock()
         self._config = {}
-        self._serial = None
+        self._conn = None
         self._connected = False
         self._errors = 0
 
@@ -28,8 +36,12 @@ class PlcWorker(QObject):
         with self._config_lock:
             previous = self._config
             self._config = copy.deepcopy(config or {})
-        if previous.get("port") != self._config.get("port") or previous.get("enabled") != self._config.get("enabled"):
-            self._close_serial()
+        # Bat ky truong nao anh huong toi VIEC MO KET NOI deu phai dong ket
+        # noi cu di, khong chi rieng "port" nhu truoc (thieu se giu nguyen
+        # socket TCP cu du IP/port vua doi trong luc dang mo cua so PLC).
+        changed_keys = ("connection_type", "port", "host", "tcp_port", "enabled")
+        if any(previous.get(k) != self._config.get(k) for k in changed_keys):
+            self._close_connection()
 
     def _job(self, kind, payload=None, correlation_id=None):
         correlation_id = correlation_id or uuid.uuid4().hex
@@ -70,54 +82,68 @@ class PlcWorker(QObject):
             self._connected = state
             self.connectionChanged.emit(state)
 
-    def _close_serial(self):
-        serial_obj, self._serial = self._serial, None
-        if serial_obj is not None:
+    def _close_connection(self):
+        conn, self._conn = self._conn, None
+        if conn is not None:
             try:
-                serial_obj.close()
+                conn.close()
             except Exception:
                 pass
         self._errors = 0
         self._set_connected(False)
 
-    def _ensure_serial(self, config):
+    def _ensure_connection(self, config):
         if not config.get("enabled"):
-            self._close_serial()
+            self._close_connection()
             return None
-        if self._serial is not None and self._serial.is_open:
-            return self._serial
+        if config.get("connection_type") == "ethernet":
+            if self._conn is not None:
+                return self._conn
+            try:
+                self._conn = open_tcp(config.get("host", ""), int(config.get("tcp_port", 0) or 0))
+            except Exception:
+                self._set_connected(False)
+                raise
+            return self._conn
+        if self._conn is not None and getattr(self._conn, "is_open", False):
+            return self._conn
         if not config.get("port"):
             raise PlcCommError("Chưa chọn cổng COM cho PLC")
         try:
-            self._serial = open_serial(config["port"], timeout=1.0)
+            self._conn = open_serial(config["port"], timeout=1.0)
         except Exception as exc:
             self._set_connected(False)
             raise PlcCommError(f"Không mở được {config['port']}: {exc}") from exc
-        # KHONG goi _set_connected(True) o day — mo cong COM thanh cong chi
-        # co nghia he dieu hanh cho phep truy cap cong, KHONG co nghia PLC
-        # that su dang phan hoi (bug that: PLC khong ket noi/khong tra loi
-        # van hien "Da ket noi" vi mo cong luon thanh cong). "Connected"
-        # chi duoc coi la dung sau khi 1 lenh giao tiep THAT SU thanh cong —
-        # xem run(), goi _set_connected(True) o nhanh commandSucceeded.
-        return self._serial
+        # KHONG goi _set_connected(True) o day (ca 2 nhanh serial/TCP o tren)
+        # — mo cong COM/socket thanh cong chi co nghia he dieu hanh cho phep
+        # truy cap, KHONG co nghia PLC that su dang phan hoi (bug that: PLC
+        # khong ket noi/khong tra loi van hien "Da ket noi" vi mo cong luon
+        # thanh cong). "Connected" chi duoc coi la dung sau khi 1 lenh giao
+        # tiep THAT SU thanh cong — xem run(), goi _set_connected(True) o
+        # nhanh commandSucceeded.
+        return self._conn
 
     def _execute(self, kind, payload, config):
         if not config.get("enabled"):
             raise PlcCommError("PLC chưa được bật")
-        ser = self._ensure_serial(config)
+        conn = self._ensure_connection(config)
         d_register = int(config.get("d_register", 0))
+        if config.get("connection_type") == "ethernet":
+            read_fn, write_fn = read_register_mc, write_register_mc
+        else:
+            read_fn, write_fn = read_register, write_register
         if kind in ("test_read", "health_check"):
-            return {"value": read_register(ser, d_register)}
+            return {"value": read_fn(conn, d_register)}
         if kind == "test_write":
-            write_register(ser, d_register, int(payload["value"]))
+            write_fn(conn, d_register, int(payload["value"]))
             return {"value": int(payload["value"])}
         if kind == "ng_signal":
             value = int(config.get("ng_value", 1))
-            write_register(ser, d_register, value)
+            write_fn(conn, d_register, value)
             return {"value": value}
         if kind == "ok_reset":
             value = int(payload.get("value", config.get("ok_reset_value", 0)))
-            write_register(ser, d_register, value)
+            write_fn(conn, d_register, value)
             return {"value": value}
         raise PlcCommError(f"Unknown PLC command: {kind}")
 
@@ -139,6 +165,6 @@ class PlcWorker(QObject):
             except Exception as exc:
                 self._errors += 1
                 if self._errors >= 3:
-                    self._close_serial()
+                    self._close_connection()
                 self.commandFailed.emit(kind, correlation_id, str(exc))
-        self._close_serial()
+        self._close_connection()

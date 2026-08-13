@@ -52,6 +52,53 @@ QSpinBox {
      </property>
      <layout class="QVBoxLayout" name="verticalLayoutConnection">
       <item>
+       <layout class="QHBoxLayout" name="horizontalLayoutConnType">
+        <item>
+         <widget class="QLabel" name="labelConnTypeCaption">
+          <property name="text">
+           <string>Loại kết nối:</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioConnectionSerial">
+          <property name="styleSheet">
+           <string notr="true">color: rgb(255, 255, 255);</string>
+          </property>
+          <property name="text">
+           <string>RS232 (COM)</string>
+          </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="radioConnectionEthernet">
+          <property name="styleSheet">
+           <string notr="true">color: rgb(255, 255, 255);</string>
+          </property>
+          <property name="text">
+           <string>Ethernet (MC TCP)</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="horizontalSpacerConnType">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>40</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </item>
+      <item>
        <layout class="QHBoxLayout" name="horizontalLayoutPort">
         <item>
          <widget class="QCheckBox" name="checkBoxEnabled">
@@ -90,6 +137,40 @@ QSpinBox {
          <widget class="QPushButton" name="pushButtonRefreshPorts">
           <property name="text">
            <string>Làm mới</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelHostCaption">
+          <property name="text">
+           <string>Địa chỉ IP:</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLineEdit" name="lineEditHost">
+          <property name="maximumSize">
+           <size>
+            <width>120</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="placeholderText">
+           <string>vd 192.168.3.250</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="labelTcpPortCaption">
+          <property name="text">
+           <string>Cổng TCP:</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QSpinBox" name="spinBoxTcpPort">
+          <property name="maximum">
+           <number>65535</number>
           </property>
          </widget>
         </item>

@@ -6,7 +6,10 @@ from app_paths import get_config_dir
 PLC_CONFIG_PATH = os.path.join(get_config_dir(), "plc_config.json")
 DEFAULT_PLC_CONFIG = {
     "enabled": False,
+    "connection_type": "serial",  # "serial" (RS232) hoac "ethernet" (MC Protocol/TCP)
     "port": "",
+    "host": "",
+    "tcp_port": 0,
     "d_register": 100,
     "ng_value": 1,
     "mode": "pulse",

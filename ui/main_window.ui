@@ -96,15 +96,6 @@ QPushButton:disabled {
     border-color: #728C88;
 }
 
-QPushButton#pushButtonPlc {
-    background-color: #26784D;
-    color: #FFFFFF;
-}
-
-QPushButton#pushButtonPlc:hover {
-    background-color: #31885A;
-}
-
 QPushButton#pushButtonChangeServerIp {
     min-height: 22px;
     padding: 2px 9px;
@@ -302,7 +293,8 @@ QTableCornerButton::section {
 }
 
 QLabel#labelServerStatus,
-QLabel#labelPendingSync {
+QLabel#labelPendingSync,
+QLabel#labelPlcStatus {
     background-color: #E7EFEA;
     color: #284744;
     border: 1px solid #A9BDB8;
@@ -415,6 +407,24 @@ Line: -  |  Station: -</string>
        </widget>
       </item>
       <item>
+       <widget class="QLabel" name="labelAppVersion">
+        <property name="font">
+         <font>
+          <pointsize>8</pointsize>
+         </font>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">color: #6E8985;</string>
+        </property>
+        <property name="text">
+         <string>v-</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignBottom</set>
+        </property>
+       </widget>
+      </item>
+      <item>
        <spacer name="horizontalSpacer">
         <property name="orientation">
          <enum>Qt::Horizontal</enum>
@@ -490,6 +500,25 @@ Line: -  |  Station: -</string>
         </property>
         <property name="text">
          <string>Mapping</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="pushButtonRework">
+        <property name="minimumSize">
+         <size>
+          <width>120</width>
+          <height>42</height>
+         </size>
+        </property>
+        <property name="font">
+         <font>
+          <weight>75</weight>
+          <bold>true</bold>
+         </font>
+        </property>
+        <property name="text">
+         <string>Rework</string>
         </property>
        </widget>
       </item>
@@ -922,7 +951,7 @@ Line: -  |  Station: -</string>
             <item>
              <layout class="QHBoxLayout" name="horizontalLayoutServerStatus">
               <item>
-               <widget class="QLabel" name="labelServerStatus">
+              <widget class="QLabel" name="labelServerStatus">
                 <property name="minimumSize">
                  <size>
                   <width>0</width>
@@ -942,8 +971,8 @@ Line: -  |  Station: -</string>
                 <property name="alignment">
                  <set>Qt::AlignCenter</set>
                 </property>
-               </widget>
-              </item>
+              </widget>
+             </item>
               <item>
                <widget class="QPushButton" name="pushButtonChangeServerIp">
                 <property name="minimumSize">
@@ -957,6 +986,14 @@ Line: -  |  Station: -</string>
                 </property>
                </widget>
               </item>
+             <item>
+              <widget class="QLabel" name="labelPlcStatus">
+               <property name="minimumSize"><size><width>0</width><height>24</height></size></property>
+               <property name="text"><string>PLC: -</string></property>
+               <property name="visible"><bool>false</bool></property>
+               <property name="alignment"><set>Qt::AlignCenter</set></property>
+              </widget>
+             </item>
              </layout>
             </item>
            </layout>
@@ -1059,6 +1096,64 @@ Line: -  |  Station: -</string>
             <bool>true</bool>
            </property>
           </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayoutReworkBanner">
+           <item>
+            <widget class="QLabel" name="labelReworkStatus">
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="font">
+              <font>
+               <pointsize>11</pointsize>
+               <weight>75</weight>
+               <bold>true</bold>
+              </font>
+             </property>
+             <property name="styleSheet">
+              <string notr="true">background-color: #ffc107; color: black;</string>
+             </property>
+             <property name="visible">
+              <bool>false</bool>
+             </property>
+             <property name="text">
+              <string/>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignCenter</set>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="pushButtonStopRework">
+             <property name="minimumSize">
+              <size>
+               <width>110</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="font">
+              <font>
+               <weight>75</weight>
+               <bold>true</bold>
+              </font>
+             </property>
+             <property name="visible">
+              <bool>false</bool>
+             </property>
+             <property name="text">
+              <string>Dừng Rework</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
          </item>
          <item>
           <widget class="QGroupBox" name="groupBoxResult">

@@ -177,6 +177,14 @@ BEGIN
   END IF;
 END $$;
 
+-- Tính năng Rework NG (docs/13-huong-dan-rework-cho-may-local.md) — 3 giá trị
+-- enum mới. PHẢI là câu lệnh top-level, KHÔNG được bọc trong DO $$ ... END $$
+-- (Postgres cấm ALTER TYPE ... ADD VALUE chạy bên trong DO/hàm PL/pgSQL).
+-- IF NOT EXISTS đã tự idempotent, chạy lại nhiều lần vô hại.
+ALTER TYPE local_qr.local_scan_status ADD VALUE IF NOT EXISTS 'REWORK';
+ALTER TYPE local_qr.final_scan_status ADD VALUE IF NOT EXISTS 'REWORK';
+ALTER TYPE local_qr.final_scan_status ADD VALUE IF NOT EXISTS 'NG_REWORK';
+
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -644,6 +652,10 @@ CREATE INDEX IF NOT EXISTS idx_local_scan_records_pending_sync
 
 CREATE INDEX IF NOT EXISTS idx_local_scan_records_final_status
   ON local_scan_records (final_status, scan_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_local_scan_records_ng_unreworked
+  ON local_scan_records (scan_at DESC)
+  WHERE local_status = 'NG' AND final_status = 'NG';
 
 CREATE INDEX IF NOT EXISTS idx_local_scan_records_server_code
   ON local_scan_records (server_code, scan_at DESC);

@@ -1,0 +1,4 @@
+{
+    "title": "Rework mã hàng NG",
+    "content": "1.Nhấn nút 'Rework' ở panel bên phải. |2. Lọc danh sách mã hàng NG cần rework hoặc làm mới danh sách. |3. Tích chọn các mã cần rework (mặc định chọn tất cả). |4. Nhấn nút 'Bắt đầu Rework' để bắt đầu quá trình rework. |5. Quét mã hàng NG cần rework, nếu OK phần mềm sẽ tự động chuyển sang mã tiếp theo trong danh sách. Trong quá trình quét có thể dừng bất cứ lúc nào, các mã đã được rework sẽ được lưu lại."
+}

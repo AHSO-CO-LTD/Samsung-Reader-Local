@@ -1,0 +1,4 @@
+{
+    "title": "Cấu hình kết nối và thanh ghi PLC",
+    "content": "1.Nhấn nút 'PLC' ở panel bên phải. |2. Tích chọn 'Bật gửi tín hiệu PLC' để cho phép gửi tín hiệu đến PLC. |3. Chọn cổng COM đang dùng để kết nối với PLC. Đợi tối đa 5s, PLC sẽ báo 'Đã kết nối'. |4. Chọn địa chỉ thanh ghi D và giá trị ghi khi NG. |5. Nhấn nút 'Ghi thử' để ghi giá trị NG đã chọn ở bước 4 vào thanh ghi đã chọn. Sau đó nhấn nút 'Đọc thử' để đọc giá trị từ thanh ghi đã chọn. Nếu giá trị đọc được trùng với giá trị đã ghi, nghĩa là kết nối và thanh ghi PLC đã được cấu hình thành công. |6. Chọn chế độ tín hiệu gửi PLC. Nếu chọn gửi xung thì cài độ dài xung, mặc định xung dài 1500ms và thanh ghi tự set về giá trị 0), nếu chọn gửi trạng thái thì cài giá trị set cho thanh ghi khi mã hàng OK. |7. Tích chọn NG nào sẽ gửi tín hiệu cho PLC. |8. Nhấn nút 'Lưu và Đóng'"
+}

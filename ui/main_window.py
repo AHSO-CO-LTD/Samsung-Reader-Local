@@ -3,7 +3,7 @@ import time
 from datetime import datetime
 
 from PyQt5 import uic
-from PyQt5.QtCore import QEvent, Qt, QTimer, QUrl
+from PyQt5.QtCore import QEvent, Qt, QThread, QTimer, QUrl
 from PyQt5.QtGui import QColor
 from PyQt5.QtMultimedia import QMediaContent, QMediaPlayer, QMediaPlaylist
 from PyQt5.QtWidgets import (
@@ -33,12 +33,15 @@ from db.local_db import (
     claim_pending_scans_for_batch,
     claim_specific_scans_for_batch,
     create_sync_batch,
+    delete_rework_attempt,
     finish_command,
     get_app_settings,
     get_command_local_status,
     get_latest_unread_notification,
+    get_led_slot_counts,
     get_scan_counts,
     get_server_settings,
+    list_ng_unreworked_scans,
     mark_notification_read,
     mark_scan_submit_failed,
     mark_sync_batch_failed,
@@ -54,9 +57,14 @@ from reader.reader_store import (
     ROLE_LED_BAR,
     ROLE_QR_BOTTOM,
     infer_role_from_name,
+    load_batch_submit_max_size,
+    load_chassis_search_idle_timeout_ms,
+    load_hid_scan_max_gap_sec,
+    load_hid_scan_min_length,
     load_hid_scanner_enabled,
     load_master_fill_timeout_seconds,
     load_readers,
+    load_rework_advance_delay_ms,
 )
 from server.api_client import SamsungQrServerClient, ServerApiConfig
 from server.runtime_socket_client import MachineRuntimeClient
@@ -65,7 +73,11 @@ from server.server_worker import ServerWorker
 from ui.config_window import ConfigWindow
 from ui.reconcile_window import ReconcileWindow
 from ui.register_window import RegisterWindow
+from ui.rework_window import RewokWindow
 from app_paths import get_bundle_dir
+from plc.plc_store import load_plc_config
+from plc.plc_worker import PlcWorker
+from ui.plc_window import PlcWindow
 
 UI_PATH = os.path.join(get_bundle_dir(), "ui", "main_window.ui")
 MAPPING_UI_PATH = os.path.join(get_bundle_dir(), "ui", "mapping_window.ui")
@@ -107,6 +119,7 @@ STATUS_COLORS = {
 }
 
 SERVER_HEALTH_CHECK_INTERVAL_MS = 5000
+PLC_HEALTH_CHECK_INTERVAL_MS = 5000
 IDENTITY_STATUS_POLL_INTERVAL_MS = 15000
 
 SERVER_STATUS_LABELS = {
@@ -187,7 +200,7 @@ NOTIFICATION_SEVERITY_TEXT_COLORS = {
     "_default": "#D8E9E4",  # màu chữ mặc định giống log cũ
 }
 
-APP_VERSION = "0.7.1"
+APP_VERSION = "0.8.2"
 # Ngày PHÁT HÀNH bản build này (không phải hôm nay) — dùng để check cửa sổ
 # update_until của license (xem licensing/license_client.py:verify_license).
 # Cập nhật thủ công mỗi lần release thật, không tự tính date.today().
@@ -198,10 +211,6 @@ APP_RELEASE_DATE = ""
 # hành cho dự án này. Đặt cạnh APP_VERSION/APP_RELEASE_DATE cho dễ tìm — cả 3
 # đều là cấu hình bắt buộc trước khi build (xem E:\License-Key-main\INTEGRATION.md mục 3).
 APP_PRODUCT = "Samsung Reader Local"
-
-# Mốc dùng lại từ reconcile_pull's take mặc định (server/api_client.py) — doc
-# không cho số cụ thể riêng cho sync/batches/submit.
-BATCH_SUBMIT_MAX_SIZE = 200
 
 RESULT_STYLE = {
     # "" (không set gì) -> tự rơi về đúng style mặc định của
@@ -302,6 +311,28 @@ NG_LOCAL_DUPLICATE = "LOCAL_DUPLICATE"
 NG_SCAN_FAILED = "SCAN_FAILED"
 READER_SCAN_ERROR_TEXT = "ERROR"
 
+# Mô tả ngắn gọn, TĨNH (không phụ thuộc text/entry của 1 lần quét cụ thể)
+# cho từng mã lý do NG — dùng cho danh sách tổng hợp nhiều bản ghi (vd cột
+# "Lý do NG" trong RewokWindow) nơi không còn giữ lại text gốc để dựng câu
+# chi tiết như _describe_ng() (method, cần self để tham chiếu ngữ cảnh phiên
+# quét HIỆN TẠI — không áp dụng được cho bản ghi lịch sử của record khác).
+NG_REASON_LABELS = {
+    NG_SCAN_FAILED: "Không quét được mã",
+    NG_NO_PROFILE_SELECTED: "Chưa chọn Chassis Rear",
+    NG_LED_SUFFIX_NOT_MATCH: "Mã LED không khớp",
+    NG_FULL_CODE_INVALID_LENGTH: "Sai độ dài mã QRCODE BOTTOM",
+    NG_CHASSIS_NOT_MATCH: "Sai mã chassis",
+    NG_FULL_VENDOR_NOT_MATCH: "Vendor không khớp",
+    NG_QR_BOTTOM_LED_NOT_MATCH: "Mã LED trong QRCODE BOTTOM không khớp",
+    NG_FULL_FACTORY_NOT_MATCH: "Sai mã nhà máy",
+    NG_LOCAL_DUPLICATE: "Trùng mã trong ngày",
+}
+
+
+def describe_ng_reason_short(code):
+    return NG_REASON_LABELS.get(code, code or "-")
+
+
 # Máy quét mã vạch cầm tay (Keyboard-HID, giả lập gõ phím + Enter) — nguồn
 # nhập liệu thứ 2 song song với reader TCP. Không có "reader nào gửi lên" cố
 # định như socket TCP nên phải tự suy role từ NỘI DUNG mỗi lần quét — xem
@@ -310,12 +341,15 @@ READER_SCAN_ERROR_TEXT = "ERROR"
 # _is_master_mode_active().
 HID_SCANNER_NAME = "HID Scanner"
 QR_BOTTOM_PREFIX = "VN39"
-HID_SCAN_MAX_GAP_SEC = (
-    0.25  # khoảng cách tối đa giữa 2 phím liên tiếp để còn tính là "gõ từ máy quét"
-)
-HID_SCAN_MIN_LENGTH = (
-    4  # độ dài tối thiểu để tính là 1 lần quét hợp lệ (tránh bắt nhầm Enter đơn lẻ)
-)
+# HID_SCAN_MAX_GAP_SEC/HID_SCAN_MIN_LENGTH (ngưỡng nhận diện quét HID),
+# CHASSIS_REAR_SEARCH_IDLE_TIMEOUT_MS (timer tự đóng ô tìm Chassis Rear —
+# xem docstring eventFilter), REWORK_ADVANCE_DELAY_MS (thời gian giữ hiển
+# thị OK trước khi tự chuyển mã tiếp theo trong hàng đợi Rework) — cả 4 đều
+# là tham số vận hành có thể khác nhau giữa các trạm (model máy quét, tốc độ
+# thao tác operator...), đã chuyển ra JSON (reader/reader_store.py) để chỉnh
+# được không cần build lại app, xem load_hid_scan_max_gap_sec()/
+# load_hid_scan_min_length()/load_chassis_search_idle_timeout_ms()/
+# load_rework_advance_delay_ms().
 
 
 def _wrap_for_display(text, chunk_size):
@@ -334,6 +368,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         uic.loadUi(UI_PATH, self)
         self.setStyleSheet(self.styleSheet() + ARROW_ICONS_STYLESHEET)
+        self.labelAppVersion.setText(f"v{APP_VERSION}")
 
         # Giãn đều theo tỷ lệ khi cửa sổ lớn/nhỏ hơn 1920x1080 thiết kế gốc —
         # mặc định .ui KHÔNG có stretch factor nào nên Qt không biết phân
@@ -412,6 +447,8 @@ class MainWindow(QMainWindow):
         self._hid_scan_buffer = ""
         self._hid_last_keypress_time = None
         self._hid_scanner_enabled = load_hid_scanner_enabled()
+        self._hid_scan_max_gap_sec = load_hid_scan_max_gap_sec()
+        self._hid_scan_min_length = load_hid_scan_min_length()
         self._ledbar2_locked = False
         self._received_counts = {"ledbar1": 0, "ledbar2": 0, "qrbottom": 0}
         self._last_input = {}
@@ -446,6 +483,41 @@ class MainWindow(QMainWindow):
         # local_scan_id -> (generation, item) — chỉ set khi final_is_ok=True
         # (case NG hiện kết quả ngay, không cần chờ/theo dõi thêm).
         self._pending_scan_ui = {}
+
+        # Tính năng Rework NG (docs/13-huong-dan-rework-cho-may-local.md).
+        # _rework_active=False = chế độ quét bình thường. _rework_queue là
+        # list[dict] (kết quả list_ng_unreworked_scans, đã lọc theo checkbox
+        # operator chọn trong RewokWindow) xử lý TUẦN TỰ theo
+        # _rework_queue_index. _rework_awaiting_response chặn double-submit
+        # khi operator lỡ quét thêm trong lúc đang chờ phản hồi server cho mã
+        # hiện tại (tránh vi phạm UNIQUE constraint của local_scan_led_items
+        # nếu ghi trùng local_scan_id "RW-..." — xem cowork/plan cũ, phần
+        # "Vì sao KHÔNG còn nguy cơ gán nhầm rework"). _rework_pre_chassis_code
+        # nhớ lựa chọn Chassis Rear TRƯỚC KHI vào chế độ rework — chỉ lưu ở
+        # lần ĐẦU TIÊN vào chế độ (không ghi đè khi chuyển giữa các mã trong
+        # cùng 1 hàng đợi), khôi phục lại khi thoát hẳn chế độ rework.
+        self._rework_window = None
+        self._rework_active = False
+        self._rework_queue = []
+        self._rework_queue_index = 0
+        self._rework_awaiting_response = False
+        self._rework_pre_chassis_code = None
+        # Timer nhap nhay nut "Dung Rework" tren man hinh chinh trong suot
+        # luc dang o che do rework — bat o _start_rework_queue, tat + tra ve
+        # style mac dinh o _exit_rework_mode.
+        self._rework_stop_blink_timer = QTimer(self)
+        self._rework_stop_blink_timer.timeout.connect(self._toggle_stop_rework_blink)
+        self._rework_stop_blink_state = False
+        # Item QRCODE BOTTOM (QListWidgetItem) của lượt đang chờ phản hồi —
+        # tô lại màu (xanh/đỏ) khi biết kết quả CUỐI CÙNG, đúng convention
+        # _pending_scan_ui/_reflect_scan_submit_ui của luồng quét thường
+        # (item hiện xanh ngay lúc local OK chỉ là tạm, "pending" — phải đổi
+        # màu thật khi server trả lời, không được giữ nguyên xanh nếu server
+        # từ chối). _rework_pending_generation chống truy cập item đã bị Qt
+        # xoá nếu operator bấm Dừng Rework (→ _clear_session()) trong lúc
+        # đang chờ — dùng chung bộ đếm _session_generation đã có sẵn.
+        self._rework_pending_item = None
+        self._rework_pending_generation = None
 
         # True/False sau khi biết kết quả health-check gần nhất, None = chưa
         # kiểm tra lần nào — dùng để chỉ log lúc THAY ĐỔI trạng thái, tránh
@@ -513,8 +585,11 @@ class MainWindow(QMainWindow):
         self.pushButtonConfigure.clicked.connect(self.on_configure_clicked)
         self.pushButtonMapping.clicked.connect(self.on_mapping_clicked)
         self.pushButtonRegister.clicked.connect(self.on_register_clicked)
+        self.pushButtonRework.clicked.connect(self.on_rework_clicked)
+        self.pushButtonStopRework.clicked.connect(self.on_stop_rework_clicked)
         self.pushButtonChangeServerIp.clicked.connect(self.on_change_server_ip_clicked)
         self.pushButtonReset.clicked.connect(self.on_reset_clicked)
+        self.pushButtonPlc.clicked.connect(self.on_plc_clicked)
         self._configure_chassis_rear_search()
         self.comboBoxChassisRear.currentTextChanged.connect(
             self.on_chassis_rear_changed
@@ -530,6 +605,7 @@ class MainWindow(QMainWindow):
         self._load_persisted_readers()
         self._update_progress()
         self._init_server_worker()
+        self._init_plc_worker()
 
         # Cài SAU CÙNG — bắt phím toàn cục cho máy quét HID cầm tay (xem
         # eventFilter()). Cài ở tầng QApplication (không phải keyPressEvent
@@ -621,6 +697,116 @@ class MainWindow(QMainWindow):
 
     def _check_server_health(self):
         self.server_worker.enqueue("health")
+
+    def _init_plc_worker(self):
+        self._plc_thread = QThread(self)
+        self._plc_worker = PlcWorker()
+        self._plc_worker.moveToThread(self._plc_thread)
+        self._plc_thread.started.connect(self._plc_worker.run)
+        self._plc_worker.connectionChanged.connect(self._on_plc_connection_changed)
+        self._plc_worker.commandFailed.connect(self._on_plc_command_failed)
+        self._plc_worker.commandSucceeded.connect(self._on_plc_command_succeeded)
+        self._plc_thread.start()
+        self._plc_config = load_plc_config()
+        self._plc_worker.apply_config(self._plc_config)
+        self._plc_health_timer = QTimer(self)
+        self._plc_health_timer.setInterval(PLC_HEALTH_CHECK_INTERVAL_MS)
+        self._plc_health_timer.timeout.connect(self._check_plc_health)
+        self._plc_health_timer.start()
+        self._update_plc_status(False)
+
+    def _check_plc_health(self):
+        if self._plc_config.get("enabled"):
+            self._plc_worker.enqueue_test_read(kind="health_check")
+
+    def on_plc_clicked(self):
+        dialog = PlcWindow(self._plc_worker, self)
+        dialog.exec_()
+        self._plc_config = load_plc_config()
+        self._plc_worker.apply_config(self._plc_config)
+        self._update_plc_status(False if not self._plc_config.get("enabled") else None)
+
+    def _update_plc_status(self, connected):
+        if not self._plc_config.get("enabled"):
+            self.labelPlcStatus.setVisible(False)
+            return
+        self.labelPlcStatus.setVisible(True)
+        if connected is True:
+            self.labelPlcStatus.setText("PLC: Đã kết nối")
+            self.labelPlcStatus.setStyleSheet("color: green;")
+        elif connected is False:
+            self.labelPlcStatus.setText("PLC: Mất kết nối")
+            self.labelPlcStatus.setStyleSheet("color: red;")
+        else:
+            self.labelPlcStatus.setText("PLC: Đang kết nối...")
+
+    def _on_plc_connection_changed(self, connected):
+        was_connected = getattr(self, "_plc_connected", None)
+        self._plc_connected = connected
+        self._update_plc_status(connected)
+        if was_connected is True and not connected and self._plc_config.get("enabled"):
+            add_local_notification(
+                "PLC_DISCONNECTED", "ERROR", "PLC mất kết nối", "Không thể kết nối PLC."
+            )
+            self._poll_latest_notification()
+
+    def _on_plc_command_succeeded(self, kind, correlation_id, result):
+        if kind == "health_check":
+            self._update_plc_status(True)
+
+    def _on_plc_command_failed(self, kind, correlation_id, message):
+        if kind == "ng_signal":
+            add_local_notification(
+                "PLC_SIGNAL_FAILED", "ERROR", "PLC không nhận tín hiệu NG", message
+            )
+            self._poll_latest_notification()
+            self._append_log(
+                f"[{self._now()}] [PLC] Gửi tín hiệu NG thất bại: {message}"
+            )
+
+    def _send_plc_ok_reset(self):
+        """Đưa thanh ghi D về giá trị OK ở chế độ Trạng thái (state) — chỉ có
+        ý nghĩa khi mode="state" (mode "pulse" đã tự về 0 qua QTimer trong
+        _send_plc_ng). Dùng chung cho cả luồng quét thường (SERVER_OK, xem
+        _reflect_scan_submit_ui) VÀ rework thành công (LOCAL_REWORK_SAVED,
+        xem _handle_rework_submit_result) — thiếu ở nhánh rework là bug thật
+        đã gặp trên production: gửi NG cho PLC lúc rework NG/SERVER_DUPLICATE
+        nhưng không bao giờ gửi lại OK lúc rework thành công, khiến PLC kẹt
+        mãi ở trạng thái NG dù sản phẩm đã sửa xong."""
+        if self._plc_config.get("enabled") and self._plc_config.get("mode") == "state":
+            self._plc_worker.send_ok_reset()
+
+    def _plc_enabled_for(self, rework=False):
+        return bool(
+            self._plc_config.get("enabled")
+            and self._plc_config.get(
+                "send_on_rework_ng" if rework else "send_on_normal_ng"
+            )
+        )
+
+    def _send_plc_ng(self, rework=False):
+        if not self._plc_enabled_for(rework):
+            return
+        self._plc_worker.send_ng_signal()
+        if self._plc_config.get("mode") == "pulse":
+            # KHONG duoc truyen thang self._plc_worker.send_pulse_reset (bound
+            # method cua 1 QObject dang o thread khac qua moveToThread) lam
+            # callback cho QTimer.singleShot — PyQt tu dong coi day la 1 ket
+            # noi lien-thread va xep hang cho (QueuedConnection) doi thread
+            # cua worker xu ly, nhung thread do KHONG BAO GIO chay Qt event
+            # loop rieng (PlcWorker.run() la 1 vong while chan cung, khong
+            # nhuong lai cho QThread.exec_()) — nen lenh xep hang nay KHONG
+            # BAO GIO duoc giao, pulse khong bao gio tu reset ve 0 (bug that
+            # da xac nhan bang PLC that: ghi NG thanh cong nhung cho mai
+            # khong thay reset). Boc trong lambda de no chi la 1 ham Python
+            # thuan, chay truc tiep tren GUI thread khi timer no — ben trong
+            # lambda goi send_pulse_reset() nhu 1 method call binh thuong
+            # (chi dua vao queue.Queue thread-safe, khong qua co che
+            # signal/slot cua Qt) nen khong bi anh huong boi thread affinity.
+            QTimer.singleShot(
+                int(self._plc_config.get("pulse_duration_ms", 1500)),
+                lambda: self._plc_worker.send_pulse_reset(),
+            )
 
     def _check_identity_status(self):
         if self._serial and self._uid:
@@ -800,6 +986,33 @@ class MainWindow(QMainWindow):
                 )
                 self._append_log(f"[{self._now()}] [Scan] {message}")
                 self._apply_runtime_status("BLOCKED", message)
+            elif code and local_scan_id.startswith("RW-"):
+                # REWORK_SOURCE_INVALID/NOT_FOUND/NOT_NG (docs/13 mục 5.3-5.5)
+                # — lỗi nghiệp vụ vĩnh viễn, không tự sửa được bằng cách thử
+                # lại. mark_scan_submit_failed(blocked=True) đã tự xoá hẳn
+                # bản ghi RW-... (xem db/local_db.py) — ở đây chỉ lo hiển
+                # thị/điều khiển hàng đợi, không để nó treo vì 1 mã hỏng.
+                mark_scan_submit_failed(
+                    local_scan_id, code, payload.get("message"), blocked=True
+                )
+                old_id = local_scan_id[len("RW-") :]
+                self._append_log(
+                    f"[{self._now()}] [Rework] Lỗi nghiệp vụ ({code}) cho mã: {old_id} — bỏ qua mã này."
+                )
+                add_local_notification(
+                    "LOCAL_REWORK_FAILED",
+                    "ERROR",
+                    "Rework thất bại",
+                    f"Mã NG {old_id} không rework được ({code}).",
+                )
+                self._apply_rework_result_color(False)
+                self.set_result_status("ng")
+                if self._rework_active:
+                    self._rework_queue_index += 1
+                    QTimer.singleShot(
+                        load_rework_advance_delay_ms(),
+                        self._advance_rework_queue_if_active,
+                    )
             elif code:
                 # Họ mã FULL_CODE_INVALID/DUPLICATE_KEY_INVALID/... — server bác
                 # cấu trúc payload, hiếm gặp, nghĩa là parser local sai lệch.
@@ -825,6 +1038,31 @@ class MainWindow(QMainWindow):
                 self._append_log(
                     f"[{self._now()}] [Scan] Lỗi mạng khi gửi scan (id={local_scan_id}): {error_message}"
                 )
+                # Rework: không giữ operator chờ mạng — mã này sẽ tự hoàn tất
+                # đúng đắn ở lần retry nền sau (apply_scan_submit_result đánh
+                # dấu NG_REWORK bất kể lúc nào phản hồi thật sự về), cho hàng
+                # đợi sống tiếp ngay bằng mã kế tiếp. NHƯNG phải báo rõ cho
+                # operator biết lý do màn hình đột ngột chuyển sang mã khác —
+                # trước đây im lặng hoàn toàn, dễ gây cảm giác "tự nhiên biến
+                # mất" đúng lúc server bị crash/mất mạng giữa chừng.
+                if local_scan_id.startswith("RW-"):
+                    old_id = local_scan_id[len("RW-") :]
+                    detail = (
+                        f"Mất kết nối server khi gửi rework cho mã {old_id} — "
+                        f"sẽ tự động gửi lại khi có mạng. Mã NG vẫn giữ nguyên, "
+                        f"chưa cần quét lại."
+                    )
+                    self._append_log(f"[{self._now()}] [Rework] {detail}")
+                    add_local_notification(
+                        "LOCAL_REWORK_NETWORK_ERROR",
+                        "WARNING",
+                        "Mất kết nối khi rework",
+                        detail,
+                    )
+                    self._poll_latest_notification()
+                    if self._rework_active:
+                        self._rework_queue_index += 1
+                        self._advance_rework_queue()
         elif job_kind == "batch_submit":
             # Cùng lý do defensive-dual-path như scan_submit ở trên —
             # BATCH_SUBMIT_PARTIAL_FAILED có success:false trong sample doc,
@@ -1173,7 +1411,7 @@ class MainWindow(QMainWindow):
         scans_rows = (
             claim_specific_scans_for_batch(scan_ids)
             if scan_ids
-            else claim_pending_scans_for_batch(BATCH_SUBMIT_MAX_SIZE)
+            else claim_pending_scans_for_batch(load_batch_submit_max_size())
         )
         batch_code = new_batch_code(trigger_type)
         machine_code = get_app_settings().get("machine_code")
@@ -1621,6 +1859,8 @@ class MainWindow(QMainWindow):
         # gọi _rebuild_reader_table() (sẽ vẽ lại dòng "HID Scanner" đúng
         # trạng thái mới).
         self._hid_scanner_enabled = load_hid_scanner_enabled()
+        self._hid_scan_max_gap_sec = load_hid_scan_max_gap_sec()
+        self._hid_scan_min_length = load_hid_scan_min_length()
         self._sync_reader_panel()
 
     ######################################################################
@@ -1639,6 +1879,116 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dlg.exec_()
+
+    ######################################################################
+    # Rework sản phẩm NG (docs/13-huong-dan-rework-cho-may-local.md)
+    ######################################################################
+
+    def on_rework_clicked(self):
+        def on_filter(chassis_code, vendor_char):
+            rows = list_ng_unreworked_scans(
+                chassis_code=chassis_code, vendor_char=vendor_char
+            )
+            for row in rows:
+                row["ng_reason_label"] = describe_ng_reason_short(
+                    row.get("local_ng_reason")
+                )
+            return rows
+
+        dlg = RewokWindow(on_filter=on_filter, parent=self)
+        if dlg.exec_() == QDialog.Accepted:
+            rows = dlg.selected_rows()
+            if rows:
+                self._start_rework_queue(rows)
+
+    def _start_rework_queue(self, rows):
+        self._rework_pre_chassis_code = self.comboBoxChassisRear.currentText()
+        self._rework_queue = rows
+        self._rework_queue_index = 0
+        self._rework_active = True
+        self.pushButtonStopRework.setVisible(True)
+        self.labelReworkStatus.setVisible(True)
+        self._rework_stop_blink_state = False
+        self._rework_stop_blink_timer.start(400)
+        self._advance_rework_queue()
+
+    def _toggle_stop_rework_blink(self):
+        self._rework_stop_blink_state = not self._rework_stop_blink_state
+        if self._rework_stop_blink_state:
+            self.pushButtonStopRework.setStyleSheet(
+                "background-color: #43A047; color: #FFFFFF;"
+            )
+        else:
+            self.pushButtonStopRework.setStyleSheet(
+                "background-color: #A5D6A7; color: #1B5E20;"
+            )
+
+    def _advance_rework_queue(self):
+        if self._rework_queue_index >= len(self._rework_queue):
+            self._exit_rework_mode(finished=True)
+            return
+        current = self._rework_queue[self._rework_queue_index]
+        self._clear_session()
+        self._rework_awaiting_response = False
+        canonical_code = self._canonical_chassis_code(current["full_chassis_code"])
+        if canonical_code:
+            self.comboBoxChassisRear.setCurrentText(canonical_code)
+        # Khôi phục Quantity LED BAR 1/2 theo ĐÚNG số lượng thật đã ghi nhận
+        # lúc NG gốc xảy ra — làm SAU setCurrentText() vì đổi chassis tự kích
+        # hoạt _apply_ledbar2_lock() (reset LED BAR 2 về mặc định cứng "2"
+        # nếu profile có Code LED 2) — giá trị lịch sử thật ở đây phải ghi
+        # đè lên mặc định đó mới đúng, không phải ngược lại.
+        self._restore_rework_led_quantities(current["local_scan_id"])
+        self.labelReworkStatus.setText(
+            f"REWORK {self._rework_queue_index + 1}/{len(self._rework_queue)}: "
+            f"{current['full_chassis_code']} (mã gốc: {current['local_scan_id']})"
+        )
+        self._append_log(
+            f"[{self._now()}] [Rework] Đang chờ quét lại mã: {current['local_scan_id']} "
+            f"({current['full_chassis_code']})"
+        )
+
+    def _restore_rework_led_quantities(self, old_local_scan_id):
+        """Khôi phục Quantity LED BAR 1/2 theo ĐÚNG số lượng thật đã ghi
+        nhận lúc NG gốc xảy ra (đọc từ chính local_scan_led_items của bản
+        ghi đó) — không dùng giá trị Quantity đang có sẵn trên màn hình (có
+        thể là leftover từ thao tác trước, không liên quan gì tới phiên NG
+        này) lẫn mặc định cứng của _apply_ledbar2_lock. Chỉ set khi có dữ
+        liệu lịch sử cho đúng slot đó — bản ghi NG do lỗi đọc mã (chưa kịp
+        thu thập LED nào) thì không có gì để khôi phục, giữ nguyên giá trị
+        hiện tại của cột đó."""
+        counts = get_led_slot_counts(old_local_scan_id)
+        if 1 in counts:
+            self.spinBoxLedBar1Count.setValue(counts[1])
+        if 2 in counts:
+            self.spinBoxLedBar2Count.setValue(counts[2])
+
+    def _exit_rework_mode(self, finished):
+        count_done = self._rework_queue_index
+        count_total = len(self._rework_queue)
+        if self._rework_pre_chassis_code is not None:
+            self.comboBoxChassisRear.setCurrentText(self._rework_pre_chassis_code)
+        self._clear_session()
+        self.labelReworkStatus.setVisible(False)
+        self.pushButtonStopRework.setVisible(False)
+        self._rework_stop_blink_timer.stop()
+        self.pushButtonStopRework.setStyleSheet("")
+        self._rework_active = False
+        self._rework_queue = []
+        self._rework_queue_index = 0
+        self._rework_awaiting_response = False
+        self._rework_pre_chassis_code = None
+        if finished:
+            self._append_log(
+                f"[{self._now()}] [Rework] Hoàn tất hàng đợi rework ({count_done}/{count_total} mã)."
+            )
+        else:
+            self._append_log(
+                f"[{self._now()}] [Rework] Đã dừng rework ({count_done}/{count_total} mã đã xử lý)."
+            )
+
+    def on_stop_rework_clicked(self):
+        self._exit_rework_mode(finished=False)
 
     ######################################################################
     # Đổi địa chỉ server — lưu vào server/server_config.json, đọc lại mỗi
@@ -1717,6 +2067,12 @@ class MainWindow(QMainWindow):
         self._last_valid_chassis_code = None
         self._finishing_chassis_rear_search = False
 
+        self._chassis_rear_idle_timer = QTimer(self)
+        self._chassis_rear_idle_timer.setSingleShot(True)
+        self._chassis_rear_idle_timer.setInterval(load_chassis_search_idle_timeout_ms())
+        self._chassis_rear_idle_timer.timeout.connect(self._finish_chassis_rear_search)
+        line_edit.textEdited.connect(self._restart_chassis_rear_idle_timer)
+
         completer = combo.completer()
         completer.setCompletionMode(QCompleter.PopupCompletion)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
@@ -1738,6 +2094,12 @@ class MainWindow(QMainWindow):
     def _canonical_chassis_code(self, code):
         return self._chassis_codes_casefold.get((code or "").strip().casefold())
 
+    def _restart_chassis_rear_idle_timer(self, *_args):
+        """Reset đồng hồ đếm ngược mỗi khi có tương tác trong ô tìm Chassis
+        Rear (gõ phím, di chuyển trong popup) — chỉ tự đóng ô tìm kiếm sau 1
+        khoảng KHÔNG có gì xảy ra, không cắt ngang lúc đang thao tác."""
+        self._chassis_rear_idle_timer.start()
+
     def _finish_chassis_rear_search(self, selected_code=None):
         """Kết thúc nhập Chassis và trả keyboard events lại cho HID scanner."""
         if self._finishing_chassis_rear_search:
@@ -1745,6 +2107,7 @@ class MainWindow(QMainWindow):
 
         self._finishing_chassis_rear_search = True
         try:
+            self._chassis_rear_idle_timer.stop()
             canonical_code = self._canonical_chassis_code(selected_code)
             if canonical_code:
                 self.comboBoxChassisRear.setCurrentText(canonical_code)
@@ -1956,7 +2319,21 @@ class MainWindow(QMainWindow):
         NUỐT (return True) mọi phím (ký tự thường lẫn Enter) ngay khi tính
         năng đang bật, không cần dò trùng gì cả — chặn đứng Qt phát lại từ
         gốc. Riêng ô tìm Chassis Rear được loại trừ để người dùng vẫn nhập
-        và xác nhận nội dung autocomplete bình thường."""
+        và xác nhận nội dung autocomplete bình thường — bù lại, ô này tự
+        đóng sau 1 khoảng không tương tác (xem load_chassis_search_idle_timeout_ms())
+        để giới hạn thời gian HID scanner có thể bị "nuốt" mất vào ô tìm kiếm."""
+        if (
+            event.type() == QEvent.FocusIn
+            and obj is self.comboBoxChassisRear.lineEdit()
+        ):
+            self._restart_chassis_rear_idle_timer()
+
+        if (
+            event.type() == QEvent.KeyPress
+            and self.comboBoxChassisRear.lineEdit().hasFocus()
+        ):
+            self._restart_chassis_rear_idle_timer()
+
         if (
             event.type() == QEvent.MouseButtonPress
             and self.comboBoxChassisRear.lineEdit().hasFocus()
@@ -1990,15 +2367,15 @@ class MainWindow(QMainWindow):
                 buffer, self._hid_scan_buffer = self._hid_scan_buffer, ""
                 if (
                     gap is not None
-                    and gap <= HID_SCAN_MAX_GAP_SEC
-                    and len(buffer) >= HID_SCAN_MIN_LENGTH
+                    and gap <= self._hid_scan_max_gap_sec
+                    and len(buffer) >= self._hid_scan_min_length
                 ):
                     self._handle_hid_scan(buffer)
                 return True
 
             text = event.text()
             if text.isprintable():
-                if gap is None or gap > HID_SCAN_MAX_GAP_SEC:
+                if gap is None or gap > self._hid_scan_max_gap_sec:
                     self._hid_scan_buffer = text  # bắt đầu chuỗi mới
                 else:
                     self._hid_scan_buffer += text
@@ -2558,6 +2935,22 @@ class MainWindow(QMainWindow):
         led_items_data = self._build_led_items_data(led_ledbar1, led_ledbar2, entry)
         scan_at = datetime.now().astimezone()
 
+        if self._rework_active:
+            if not is_ok:
+                self._send_plc_ng(rework=True)
+            self._handle_rework_scan_attempt(
+                is_ok,
+                ng_reason,
+                ng_text,
+                entry,
+                profile_id,
+                qr_data,
+                led_items_data,
+                scan_at,
+                qr["item"],
+            )
+            return
+
         try:
             final_is_ok, final_reason, first_scan_at, local_scan_id = record_full_scan(
                 profile_id,
@@ -2602,6 +2995,8 @@ class MainWindow(QMainWindow):
                     qr["item"],
                 )
         else:
+            if not final_is_ok:
+                self._send_plc_ng(rework=False)
             # Chỉ tô đỏ khung QR bottom khi CHÍNH QR bottom là nguyên nhân NG
             # (own_is_ok=False VÀ xác định được thật — không phải chỉ vì
             # thiếu tham chiếu LED, xem own_unverifiable ở trên), hoặc trùng
@@ -2658,6 +3053,198 @@ class MainWindow(QMainWindow):
                 final_reason,
                 scan_at,
             )
+
+        # Hoi rework ngay cho NG luc quet THUONG (khong ap dung khi dang o
+        # che do Rework — nhanh do co luong retry rieng, xem
+        # _handle_rework_scan_attempt). Chi hoi khi ban ghi co du du lieu de
+        # rework duoc that (da ghi DB thanh cong + co full_chassis_code —
+        # NG kieu SCAN_FAILED/chua chon Chassis Rear thi khong co gi de
+        # rework, giu nguyen hanh vi cu cho la cho Reset thu cong).
+        if (
+            not final_is_ok
+            and local_scan_id is not None
+            and qr_data.get("full_chassis_code")
+        ):
+            self._offer_instant_rework(
+                local_scan_id, qr_data["full_chassis_code"], final_reason
+            )
+
+    def _offer_instant_rework(self, local_scan_id, full_chassis_code, ng_reason):
+        """Hoi operator co muon rework NGAY mã vừa quét hay không — Có: vào
+        thẳng chế độ Rework cho đúng 1 mã này (KHÔNG mở RewokWindow, không
+        qua list_ng_unreworked_scans — bản ghi vừa ghi xong trong CÙNG
+        transaction, tự build hàng đợi 1 phần tử từ dữ liệu đang có sẵn,
+        tránh mọi phụ thuộc vào sync_status/thời điểm đồng bộ). Không: xoá
+        session ngay (khác hành vi NG thường — phải bấm Reset thủ công),
+        vì popup này TỰ THÂN đã là 1 bước xác nhận thay thế cho Reset."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Sản phẩm NG")
+        box.setIcon(QMessageBox.Question)
+        box.setText("Sản phẩm vừa quét bị NG.\n\nBạn có muốn rework mã này không?")
+        # QMessageBox khong tu ke thua duoc mau chu toi uu tu theme
+        # MainWindow (nen QMessageBox mac dinh sang mau, chu lai bi an theo
+        # theme toi -> gan nhu khong doc duoc, dung bug that tu anh chup
+        # man hinh) — ep hang chu ro rang mau den, khong phu thuoc theme cha.
+        # Phong to gap 4 lan so voi mac dinh Qt ban dau: font chu (~9-10pt ->
+        # 36pt) va nut nhan (cao ~28-30px -> 120px) — QMessageBox tu gian
+        # rong theo noi dung ben trong, khong can tu dat kich thuoc dialog.
+        box.setStyleSheet(
+            "QLabel { color: black; font-size: 36pt; }"
+            "QPushButton { font-size: 32pt; min-height: 120px; margin: 10px; }"
+        )
+        # Giu ca Yes lan No (No o vai tro RejectRole mac dinh cua
+        # QMessageBox.No) de Qt tu gan dung cho X/Esc.
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        rework_button = box.button(QMessageBox.Yes)
+        reset_button = box.button(QMessageBox.No)
+        rework_button.setText("REWORK")
+        reset_button.setText("RESET")
+        rework_button.setMinimumSize(400, 120)
+        reset_button.setMinimumSize(400, 120)
+        # Nhap nhay nut REWORK de thu hut chu y — timer la con cua box nen tu
+        # huy khi box dong, khong can don dep rieng.
+        blink_styles = [
+            "font-size: 32pt; min-height: 120px; margin: 10px;"
+            "background-color: #43A047; color: #FFFFFF;",
+            "font-size: 32pt; min-height: 120px; margin: 10px;"
+            "background-color: #A5D6A7; color: #1B5E20;",
+        ]
+        blink_state = {"on": False}
+
+        def _toggle_blink():
+            blink_state["on"] = not blink_state["on"]
+            rework_button.setStyleSheet(blink_styles[int(blink_state["on"])])
+
+        blink_timer = QTimer(box)
+        blink_timer.timeout.connect(_toggle_blink)
+        blink_timer.start(400)
+        _toggle_blink()
+        answer = box.exec_()
+        if answer == QMessageBox.Yes:
+            self._start_rework_queue(
+                [
+                    {
+                        "local_scan_id": local_scan_id,
+                        "full_chassis_code": full_chassis_code,
+                        "local_ng_reason": ng_reason,
+                    }
+                ]
+            )
+        else:
+            self._clear_session()
+
+    def _handle_rework_scan_attempt(
+        self,
+        is_ok,
+        ng_reason,
+        ng_text,
+        entry,
+        profile_id,
+        qr_data,
+        led_items_data,
+        scan_at,
+        qr_item,
+    ):
+        """Xử lý 1 lần quét trong lúc đang ở chế độ Rework — gọi từ
+        _finalize_scan_session khi self._rework_active. KHÔNG dùng chung
+        đường ghi/submit bình thường vì quy tắc lưu khác hẳn
+        (docs/13-huong-dan-rework-cho-may-local.md): 1 bản ghi "RW-..." chỉ
+        được phép tồn tại nếu kết cục cuối cùng là REWORK — quét lại vẫn NG
+        (bất kỳ lý do) không lưu gì cả, chỉ báo lỗi rồi chờ quét lại ĐÚNG mã
+        đang target, không tự chuyển mã tiếp theo.
+
+        QUAN TRỌNG: các nhánh "vẫn NG"/"trùng mã cục bộ" KHÔNG được gọi
+        _clear_session() — phải hiện đủ lâu + có âm báo + bắt buộc bấm Reset
+        mới quét tiếp được, giống HỆT cảm giác quét bình thường (không phải
+        tự động biến mất sau vài trăm ms như trước). Không gọi
+        _clear_session() đồng nghĩa các cột vẫn đang "đầy" (đủ quota) — cơ
+        chế có sẵn của on_data_received (_show_scan_ignored_warning) sẽ tự
+        bỏ qua + cảnh báo mọi mã quét thêm cho tới khi operator bấm Reset,
+        không cần code chặn riêng cho rework."""
+        current = self._rework_queue[self._rework_queue_index]
+        current_old_id = current["local_scan_id"]
+
+        if self._rework_awaiting_response:
+            # Đang chờ phản hồi server cho lần thử trước — chặn ở đây để
+            # tránh ghi trùng local_scan_id "RW-..." (vi phạm UNIQUE constraint
+            # của local_scan_led_items nếu ghi 2 lần cho cùng 1 ID). Không có
+            # "kết quả" nào để hiện ở đây nên vẫn xoá màn hình cho mã vừa lỡ
+            # quét thêm này (không phải kết quả rework thật).
+            self._append_log(
+                f"[{self._now()}] [Rework] Đang chờ phản hồi server cho mã trước — bỏ qua, đợi rồi quét lại."
+            )
+            self._clear_session()
+            return
+
+        if not is_ok:
+            detail = self._describe_ng(ng_reason, ng_text or "", entry)
+            self._append_log(
+                f"[{self._now()}] [Rework] Quét lại vẫn NG ({detail}) — không lưu. "
+                f"Bấm Reset rồi quét lại mã: {current_old_id}"
+            )
+            add_local_notification("LOCAL_SCAN_NG", "ERROR", "Kết quả: NG", detail)
+            self._poll_latest_notification()
+            self.set_result_status("ng")
+            return
+
+        rework_scan_id = f"RW-{current_old_id}"
+        try:
+            final_is_ok, final_reason, first_scan_at, _returned_id = record_full_scan(
+                profile_id,
+                qr_data,
+                led_items_data,
+                True,
+                None,
+                local_scan_id=rework_scan_id,
+                scan_at=scan_at,
+                local_status_override="REWORK",
+            )
+        except Exception as exc:
+            self._append_log(f"[{self._now()}] Lỗi ghi local DB (rework): {exc}")
+            self.set_result_status("ng")
+            return
+
+        if not final_is_ok:
+            self._send_plc_ng(rework=True)
+            # record_full_scan tự phát hiện TRÙNG MÃ CỤC BỘ (với 1 bản ghi
+            # khác, không liên quan tới NG gốc đang rework) trước cả khi kịp
+            # gửi server — hàm đã tự ghi local_status='NG' đè lên override
+            # 'REWORK' của chính nó. Theo đúng nguyên tắc "chỉ giữ khi kết
+            # cục là REWORK", xoá hẳn dòng này (KHÔNG gửi server) và coi như
+            # "vẫn NG, chờ quét lại".
+            delete_rework_attempt(rework_scan_id)
+            self._last_duplicate_first_scan_at = first_scan_at
+            detail = self._describe_ng(
+                final_reason, qr_data.get("full_code_raw") or "", entry
+            )
+            # qr_item vừa được tô XANH ở nhánh phân loại cục bộ phía trên
+            # (own_is_ok=True lúc đó) — record_full_scan chỉ phát hiện trùng
+            # mã SAU bước đó, nên phải tô lại ĐỎ ở đây, nếu không item vẫn
+            # hiện xanh dù kết quả cuối là NG (bug thật, đã thấy qua ảnh chụp
+            # màn hình thật của user).
+            _apply_item_result_color(qr_item, RESULT_ITEM_COLORS[False])
+            self._append_log(
+                f"[{self._now()}] [Rework] Trùng mã cục bộ ({detail}) — không lưu. "
+                f"Bấm Reset rồi quét lại mã: {current_old_id}"
+            )
+            add_local_notification("LOCAL_SCAN_NG", "ERROR", "Kết quả: NG", detail)
+            self._poll_latest_notification()
+            self.set_result_status("ng")
+            return
+
+        self._rework_awaiting_response = True
+        self._rework_pending_item = qr_item
+        self._rework_pending_generation = self._session_generation
+        self._submit_rework_scan(
+            rework_scan_id,
+            qr_data,
+            led_items_data,
+            profile_id,
+            scan_at,
+            current["local_ng_reason"],
+        )
+        self.set_result_status("pending")
 
     def _build_qr_data(self, text, entry, matched_led_code, duplicate_key):
         entry = entry or {}
@@ -2753,16 +3340,80 @@ class MainWindow(QMainWindow):
             "scan_submit", correlation_id=local_scan_id, scan_payload=payload
         )
 
+    def _submit_rework_scan(
+        self,
+        local_scan_id,
+        qr_data,
+        led_items_data,
+        profile_id,
+        scan_at,
+        source_ng_reason,
+    ):
+        """Gửi 1 lượt REWORK — payload đầy đủ như OK bình thường (docs/13
+        mục 4), chỉ khác 3 điểm bắt buộc: local_status="REWORK" (không phải
+        "OK"), local_ng_reason = lý do NG GỐC (không phải None dù lượt quét
+        lại này đã đạt — để server truy vết nguyên nhân đã sửa), và mọi
+        led_scans[].status ép thành "REWORK". Cùng job kind "scan_submit"
+        với submit thường — _handle_scan_submit_result xử lý chung, tự nhận
+        biết đây là rework qua tiền tố "RW-" của chính local_scan_id."""
+        payload = {
+            "local_scan_id": local_scan_id,
+            "machine_code": get_app_settings().get("machine_code"),
+            "serial": self._serial,
+            "uid": self._uid,
+            "profile_id": profile_id,
+            "duplicate_key": qr_data.get("duplicate_key"),
+            "full_code": {
+                "raw": qr_data.get("full_code_raw"),
+                "prefix": qr_data.get("full_prefix"),
+                "chassis_code": qr_data.get("full_chassis_code"),
+                "before_vendor": qr_data.get("full_before_vendor"),
+                "vendor_char": qr_data.get("full_vendor_char"),
+                "led_code": qr_data.get("full_led_code"),
+                "factory_code": qr_data.get("full_factory_code"),
+                "after_factory": qr_data.get("full_after_factory"),
+            },
+            "chassis_scan_raw": qr_data.get("chassis_scan_raw"),
+            "led_scans": [
+                {
+                    "slot": item["led_slot"],
+                    "index": item["led_index"],
+                    "raw": item["led_scan_raw"],
+                    "lot_no": item.get("led_lot_no"),
+                    "vendor_char": item.get("vendor_char"),
+                    "suffix": item.get("led_suffix"),
+                    "status": "REWORK",
+                    "ng_reason": item.get("ng_reason"),
+                }
+                for item in led_items_data
+            ],
+            "local_status": "REWORK",
+            "local_ng_reason": source_ng_reason,
+            "scan_at": scan_at.isoformat(),
+        }
+        self.server_worker.enqueue(
+            "scan_submit", correlation_id=local_scan_id, scan_payload=payload
+        )
+
     def _handle_scan_submit_result(self, local_scan_id, response):
         code = response.get("code")
-        if code not in ("SERVER_OK", "SERVER_DUPLICATE", "LOCAL_NG_SAVED"):
+        if code not in (
+            "SERVER_OK",
+            "SERVER_DUPLICATE",
+            "LOCAL_NG_SAVED",
+            "LOCAL_REWORK_SAVED",
+        ):
             self._append_log(
                 f"[{self._now()}] [Scan] Phản hồi không xác định (id={local_scan_id}): {code} — {response.get('message')}"
             )
             return
         apply_scan_submit_result(local_scan_id, response)
+        if local_scan_id.startswith("RW-"):
+            self._handle_rework_submit_result(local_scan_id, code, response)
+            return
         self._reflect_scan_submit_ui(local_scan_id, code)
         if code == "SERVER_DUPLICATE":
+            self._send_plc_ng(rework=False)
             add_local_notification(
                 "SERVER_DUPLICATE",
                 "ERROR",
@@ -2770,6 +3421,80 @@ class MainWindow(QMainWindow):
                 f"Server phát hiện mã quét bị trùng lặp (mã: {local_scan_id}).",
             )
             self._poll_latest_notification()
+
+    def _handle_rework_submit_result(self, local_scan_id, code, response):
+        """Xử lý phản hồi cho lượt REWORK (`local_scan_id` bắt đầu "RW-") —
+        CHỈ lo hiển thị/điều khiển hàng đợi. Tính đúng của DB (đánh dấu NG
+        gốc thành NG_REWORK, hoặc xoá hẳn lượt không thành công) đã chạy
+        XONG bên trong apply_scan_submit_result() ngay trước khi hàm này
+        được gọi — chạy đúng bất kể operator có còn ở màn hình rework hay đã
+        thoát từ lâu (xem docstring apply_scan_submit_result).
+
+        set_result_status("ok"/"ng") ở đây MỚI thật sự phát âm báo (lúc quét
+        chỉ set "pending" — không nằm trong ("ok","ng") nên chưa kêu) — đây
+        là lúc kết quả CUỐI CÙNG mới được biết, đúng thời điểm cần báo cho
+        operator. Chuyển mã tiếp theo trong hàng đợi qua QTimer.singleShot
+        (KHÔNG gọi _advance_rework_queue() ngay) để operator kịp thấy/nghe
+        kết quả OK trước khi màn hình đổi sang mã kế tiếp — tránh đúng lỗi
+        "hiện rồi mất ngay" đã gặp."""
+        old_id = local_scan_id[len("RW-") :]
+        if code == "LOCAL_REWORK_SAVED":
+            self._send_plc_ok_reset()
+            self._apply_rework_result_color(True)
+            self.set_result_status("ok")
+            add_local_notification(
+                "LOCAL_SCAN_REWORKED",
+                "INFO",
+                "Rework hoàn tất",
+                f"Mã NG {old_id} đã rework xong.",
+            )
+            self._poll_latest_notification()
+            if self._rework_active:
+                self._rework_queue_index += 1
+                QTimer.singleShot(
+                    load_rework_advance_delay_ms(), self._advance_rework_queue_if_active
+                )
+        elif code == "SERVER_DUPLICATE":
+            self._send_plc_ng(rework=True)
+            # Không tự gửi lại, không tự chuyển mã — ở lại đúng mã này, bắt
+            # buộc bấm Reset rồi thử quét 1 mã VẬT LÝ KHÁC (giống hệt yêu cầu
+            # "nếu sai thì phải bấm Reset mới quét tiếp" của quét thường).
+            detail = response.get("message") or "Server phát hiện mã quét bị trùng lặp."
+            self._apply_rework_result_color(False)
+            self._append_log(
+                f"[{self._now()}] [Rework] Server báo trùng mã ({detail}) — bấm Reset rồi thử quét mã vật lý khác cho: {old_id}"
+            )
+            add_local_notification(
+                "SERVER_DUPLICATE", "ERROR", "Server phát hiện trùng", detail
+            )
+            self._poll_latest_notification()
+            self.set_result_status("ng")
+            if self._rework_active:
+                self._rework_awaiting_response = False
+
+    def _apply_rework_result_color(self, is_ok):
+        """Tô lại màu item QRCODE BOTTOM (xanh/đỏ) đúng kết quả CUỐI CÙNG khi
+        có phản hồi server — item đang hiện xanh từ lúc phân loại local chỉ
+        là tạm (giống PENDING_ITEM_COLOR của luồng quét thường), phải đổi
+        đúng màu thật khi biết server chấp nhận hay từ chối, không được giữ
+        nguyên xanh nếu bị từ chối (SERVER_DUPLICATE/lỗi nghiệp vụ). So
+        generation trước khi đụng vào item — operator có thể đã bấm Dừng
+        Rework (→ _clear_session() → Qt đã xoá item) trong lúc chờ phản hồi."""
+        item = self._rework_pending_item
+        self._rework_pending_item = None
+        if item is None or self._rework_pending_generation != self._session_generation:
+            return
+        _apply_item_result_color(item, RESULT_ITEM_COLORS[is_ok])
+
+    def _advance_rework_queue_if_active(self):
+        """Bọc _advance_rework_queue() cho lời gọi qua QTimer.singleShot —
+        operator có thể đã bấm Dừng Rework trong lúc chờ (xem load_rework_advance_delay_ms()),
+        lúc đó _rework_active đã False và hàng đợi đã bị reset rỗng; gọi thẳng
+        _advance_rework_queue() lúc đó sẽ hiểu nhầm "hàng đợi vừa xong" và
+        chạy lại _exit_rework_mode() một lần nữa (vô hại nhưng thừa, gây log
+        trùng lặp "Hoàn tất"/"Đã dừng")."""
+        if self._rework_active:
+            self._advance_rework_queue()
 
     def _reflect_scan_submit_ui(self, local_scan_id, code):
         """Chỉ đụng UI nếu operator CHƯA chuyển sang sản phẩm khác từ lúc
@@ -2783,6 +3508,7 @@ class MainWindow(QMainWindow):
         if generation != self._session_generation:
             return
         if code == "SERVER_OK":
+            self._send_plc_ok_reset()
             _apply_item_result_color(item, RESULT_ITEM_COLORS[True])
             self.set_result_status("ok")
             add_local_notification(
@@ -2865,15 +3591,9 @@ class MainWindow(QMainWindow):
         self._result_blink_timer.setInterval(RESULT_BLINK_INTERVAL_MS)
         self._result_blink_timer.timeout.connect(self._toggle_result_blink)
 
-        # Dùng playlist 2 item giống nhau thay vì tự canh duration MP3 bằng
-        # timer — Qt tự chuyển bài đúng lúc file thứ nhất kết thúc.
-        self._result_audio_playlist = QMediaPlaylist(self)
-        self._result_audio_playlist.setPlaybackMode(QMediaPlaylist.Sequential)
-        self._result_audio_player = QMediaPlayer(self)
-        self._result_audio_player.setPlaylist(self._result_audio_playlist)
         self._reported_result_audio_errors = set()
         self._reported_missing_sound_paths = set()
-        self._result_audio_player.error.connect(self._on_result_audio_error)
+        self._create_result_audio_player()
 
     def set_result_status(self, result):
         """result: None ("-"), "ok", "ng", hoặc "pending" (đã pass local,
@@ -2941,6 +3661,22 @@ class MainWindow(QMainWindow):
         self._result_audio_playlist.clear()
         self._result_blink_visible = True
 
+    def _create_result_audio_player(self):
+        """Dựng (hoặc DỰNG LẠI, xem _on_result_audio_error) player phát âm
+        OK/NG. Tách riêng thành hàm để gọi lại được khi player cũ bị lỗi —
+        QMediaPlayer trên Windows (backend DirectShow) đôi khi gặp
+        ResourceError (error 1) tạm thời do trục trặc tầng driver âm thanh,
+        và KHÔNG tự phục hồi được sau đó — bug thật đã gặp: mất âm thanh
+        vĩnh viễn cho tới khi restart cả app. Tạo lại player mới đúng lúc
+        lỗi xảy ra giải quyết được mà không cần restart."""
+        # Dùng playlist 2 item giống nhau thay vì tự canh duration MP3 bằng
+        # timer — Qt tự chuyển bài đúng lúc file thứ nhất kết thúc.
+        self._result_audio_playlist = QMediaPlaylist(self)
+        self._result_audio_playlist.setPlaybackMode(QMediaPlaylist.Sequential)
+        self._result_audio_player = QMediaPlayer(self)
+        self._result_audio_player.setPlaylist(self._result_audio_playlist)
+        self._result_audio_player.error.connect(self._on_result_audio_error)
+
     def _on_result_audio_error(self, error):
         if error == QMediaPlayer.NoError:
             return
@@ -2949,10 +3685,21 @@ class MainWindow(QMainWindow):
             or f"QMediaPlayer error {int(error)}"
         )
         key = (int(error), message)
-        if key in self._reported_result_audio_errors:
-            return
-        self._reported_result_audio_errors.add(key)
-        self._append_log(f"[{self._now()}] [Âm thanh] {message}")
+        if key not in self._reported_result_audio_errors:
+            self._reported_result_audio_errors.add(key)
+            self._append_log(
+                f"[{self._now()}] [Âm thanh] {message} — tự tạo lại player để "
+                "phục hồi phát âm thanh."
+            )
+        # Player cu (self._result_audio_player) thuong bi "ket" sau loi nay,
+        # khong tu phat lai duoc — tao han player MOI thay vi co goi
+        # stop()/setMedia() lai tren object da loi (khong dang tin cay).
+        # deleteLater() thay vi xoa/gan None ngay — object cu co the van con
+        # dang trong 1 lenh goi callback dang chay do (chinh error signal
+        # nay), destroy ngay lap tuc co the crash.
+        self._result_audio_player.deleteLater()
+        self._result_audio_playlist.deleteLater()
+        self._create_result_audio_player()
 
     ######################################################################
     # Banner notification (thay chỗ Log cũ) — đọc lại local_notifications,
@@ -3024,4 +3771,7 @@ class MainWindow(QMainWindow):
             )
         self.server_worker.stop()
         self.server_worker.wait()
+        self._plc_worker.stop()
+        self._plc_thread.quit()
+        self._plc_thread.wait(2000)
         super().closeEvent(event)

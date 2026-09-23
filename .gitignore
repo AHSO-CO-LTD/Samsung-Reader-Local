@@ -23,6 +23,10 @@ app_error.log
 app.lock
 log/
 
+# File yêu cầu cấp license xuất từ tab License (gắn Machine ID từng máy) —
+# gửi cho bên vận hành, không commit.
+license_request_*.json
+
 # Editor / OS
 .vscode/
 Thumbs.db

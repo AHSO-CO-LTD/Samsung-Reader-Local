@@ -18,7 +18,7 @@
 | `app_paths.py` | `get_writable_dir()`/`get_bundle_dir()` — nền tảng path resolution dùng chung, phân biệt file **cần ghi/sửa được** (config JSON, log) với file **chỉ đọc bundle sẵn** (`.ui`, icon, âm thanh, `schema.sql`); tự động đúng cả khi chạy `python main.py` lẫn khi chạy `.exe` đã đóng gói — xem mục 9 |
 | `app_logger.py` | Logger riêng ghi `log/app_events.log` (xoay theo ngày, giữ 30 ngày) cho sự kiện/thông báo hệ thống — TÁCH BIỆT hoàn toàn với crash logging (`app_error.log`) của `main.py`, không lẫn 2 hệ thống |
 | `ui/main_window.py` + `.ui` | Màn hình chính: nhận scan (TCP + HID, xem mục 10), tìm/chọn Chassis Rear theo chuỗi con, so khớp OK/NG, gate màn scan theo trạng thái đăng ký/config, hiển thị Machine/Line/Station từ heartbeat và banner thông báo tiếng Việt (`labelNotificationBanner`) |
-| `ui/register_window.py` + `.ui` | Dialog đăng ký máy với server. Tab Registration là luồng chính; tab License vẫn giữ trong code/UI nhưng đang tạm disable bằng `LICENSE_TAB_ENABLED = False` |
+| `ui/register_window.py` + `.ui` | Dialog đăng ký máy với server (tab Registration) + kích hoạt license cục bộ (tab License, xem mục 11) |
 | `ui/config_window.py` + `.ui` | Dialog cấu hình reader (thêm/xoá/sửa IP, port) + checkbox bật/tắt máy quét HID (tên nút/tiêu đề tiếng Anh, label trạng thái đã dịch tiếng Việt) |
 | `ui/mapping_window.ui` | Dialog xem danh sách profile/mapping (chỉ hiển thị) |
 | `reader/reader_bridge.py` | `ReaderManager` — quản lý nhiều reader, mỗi reader 1 `QThread` giữ kết nối TCP sống |
@@ -131,7 +131,7 @@ Cột `local_app_settings.local_runtime_status`, enum cố định trong `db/sch
 
 Chỉ `READY`/`SCANNING`/`SYNCING`/`SERVER_OFFLINE` (`SCAN_ENABLED_STATUSES` trong `main_window.py`) mới cho phép scan. Mọi trạng thái khác đều chặn.
 
-Gate vào `READY`/`NOT_REGISTERED`/`WAITING_LICENSE`/`WAITING_APPROVAL`/`BLOCKED` do `main_window.py:_check_identity_status()` và phản hồi server quyết định. License cục bộ ở mục 11 là tab phụ độc lập, không được phép thay đổi `local_runtime_status` hoặc `_scan_blocked`.
+Gate vào `READY`/`NOT_REGISTERED`/`WAITING_LICENSE`/`WAITING_APPROVAL`/`BLOCKED` do `main_window.py:_check_identity_status()` và phản hồi server quyết định. License cục bộ ở mục 11 là gate quét thứ 2, kết hợp qua `_apply_scan_gate()`; license không được phép thay đổi `local_runtime_status`.
 
 ## 6. File cấu hình riêng từng máy (gitignored)
 
@@ -213,32 +213,28 @@ buffer trì hoãn 80 ms. User đã live-test bằng máy quét HID vật lý qua
 
 **Bug thật sự user báo cáo** ("lâu lâu vẫn còn nhận của slave mặc dù đã tích master... ngẫu nhiên nhưng tần suất nhiều, Config đã đóng từ lâu không đụng gì mà vẫn bị") — biểu hiện thật: 1 phiên vừa quét đủ và chốt OK, banner/kết quả CHƯA KỊP hiện (hoặc vừa hiện) thì màn hình tự xoá ngay. **KHÔNG liên quan đến dialog Config mở/đóng** — nguyên nhân là THỨ TỰ xử lý sai trong `on_data_received()`: khối "có mã mới → tự xoá kết quả phiên trước" (cờ `self._session_pending_clear`, chỉ bật khi phiên vừa chốt OK — xem `_finalize_scan_session()`, comment "chờ mã mới của sản phẩm tiếp theo mới xoá, để operator kịp nhìn kết quả") từng chạy TRƯỚC khối bỏ qua dữ liệu Slave khi đang ở chế độ Master. Slave thật vẫn giữ nguyên kết nối TCP trực tiếp song song với Master (không bị ngắt khi bật Is Master — Is Master chỉ lọc bỏ dữ liệu ở tầng xử lý, không đóng socket), nên bản sao TRÙNG LẶP của mã cuối cùng trong phiên vẫn tới qua Slave — do Master phải relay thêm qua 1 chặng UDP/TCP nội bộ phần cứng nên bản sao của Slave **thường tới SAU Master**, tức là sau khi phiên đã chốt xong. Dữ liệu trùng này tuy vẫn bị lọc bỏ đúng lúc so khớp (không lên cột nào), nhưng ĐÃ kịp kích hoạt "có mã mới" TRƯỚC KHI bị lọc bỏ, tự xoá mất banner/kết quả vừa chốt — khớp đúng mô tả "ngẫu nhiên nhưng tần suất nhiều" (xảy ra bất cứ khi nào bản sao của Slave tới sau khi Master đã chốt phiên, không phụ thuộc Config Window). **Fix**: khối bỏ qua Slave chuyển thành **điều kiện ĐẦU TIÊN** trong `on_data_received()` (chỉ sau `_scan_blocked`) — KHÔNG chỉ "đổi chỗ 2 khối", mà đặt hẳn thành dòng đầu tiên để loại bỏ hẳn kiểu bug "phụ thuộc thứ tự": sau này có thêm bao nhiêu bước xử lý mới trong hàm cũng không thể vô tình chèn trước khối này nữa. Slave bị bỏ qua HOÀN TOÀN — kể cả `_update_reader_input()` (cập nhật cột "Input" trên bảng Reader màn hình chính) cũng nằm SAU khối này, nên khi đang chế độ Master, cột Input của Slave dừng cập nhật luôn (theo yêu cầu user: "không quan tâm slave" — trước đó Input vẫn cập nhật để chẩn đoán, đã đổi theo lựa chọn của user). Đã tự verify bằng cách tạm revert về thứ tự cũ — test FAIL đúng 4/14 case liên quan, khôi phục đúng thì PASS lại 14/14 — xem `test_master_slave_session_clear_bug.py` (dựng 1 phiên OK thật qua Master bằng dữ liệu profile thật, gửi thêm 1 bản sao trùng qua Slave, xác nhận `_clear_session()` — hàm xoá hiển thị thật — KHÔNG bị gọi) và `test_master_slave_mode.py` case "3b" (xác nhận cột Input của Slave không cập nhật, còn Master vẫn cập nhật bình thường).
 
-## 11. Kích hoạt license cục bộ — tính năng phụ, đang bypass
+## 11. License cục bộ (offline, Ed25519) — gate quét thứ 2
 
-Luồng chính vẫn là đăng ký server bằng `serial`+`uid`, chờ admin duyệt và kiểm tra `identity/status`. Đây là gate duy nhất quyết định `local_runtime_status`, `_scan_blocked` và quyền quét.
+Máy chỉ quét được khi **cả hai** gate cho phép: (1) `local_runtime_status` thuộc `SCAN_ENABLED_STATUSES` (luồng đăng ký server, mục 5) **và** (2) license cục bộ ở trạng thái `active`. `MainWindow._apply_scan_gate()` là điểm DUY NHẤT set `_scan_blocked`, enable/disable input và dựng `labelRuntimeBanner`; banner ưu tiên hiện lý do license khi license chưa active. Ngoài `_scan_blocked`, `on_data_received()` và `_finalize_scan_session()` kiểm tra `_license_active` tường minh (theo khuyến nghị rải nhiều điểm verify của SDK) — dữ liệu đã ghi trước đó vẫn sync/submit bình thường, license không chặn sync.
 
-Package `licensing/` vẫn được giữ để verify license Ed25519 hoàn toàn offline.
-Dialog `"Machine Registration"` có tab Registration ở trước và tab License ở
-sau, nhưng **tab License hiện đang disable** bằng
-`ui/register_window.py:LICENSE_TAB_ENABLED = False` theo yêu cầu tạm thời. Toàn
-bộ widget/service license vẫn được giữ; khi cần dùng lại chỉ đổi flag sau khi có
-approval và test license thật. Dù bật hay tắt, kết quả license không gọi ngược
-`MainWindow`, không đổi banner/gate và không tác động registration.
+**SDK nguồn**: `E:\License-Key-main` (client SDK của AHSO). `licensing/license_client.py` là bản copy nguyên logic (không sửa — xoay `PUBLIC_KEY_HEX` chỉ cần thay file này); `licensing/license_request.py` port từ `python/license_request.py` (chỉ khác: nhận `machine_id` từ nơi gọi). `license_manager.py` của SDK KHÔNG dùng — thay bằng `licensing/service.py` lưu license vào DB.
+
+**Cấu hình release — `app_info.py` (file duy nhất cần sửa mỗi lần release)**: `APP_NAME`, `APP_VERSION` (đủ 3 số, hiển thị UI), `APP_RELEASE_DATE` (ngày phát hành build, `YYYY-MM-DD`, KHÔNG phải hôm nay), `APP_PRODUCT = "samsung-reader-local"` (phải khớp tuyệt đối `product` bên vận hành ký). License chỉ so số MAJOR của `APP_VERSION` với `max_major`, nên đổi MINOR/PATCH không bắt kích hoạt lại. `.github/workflows/build.yml` fail build nếu `APP_RELEASE_DATE` sai định dạng hoặc `APP_VERSION` không đủ 3 số.
+
+**Vòng đời kiểm tra**: `_init_license_gate()` verify lúc khởi động (trước `_init_server_worker`), `RegisterWindow` gọi `on_license_changed` ngay sau Activate thành công, và `QTimer` re-check mỗi `LICENSE_RECHECK_INTERVAL_MS` (1 giờ) để bắt license trial hết hạn khi app chạy liên tục. License hết hạn giữa phiên → phiên đang quét dở bị bỏ, không ghi bản ghi. Notification chỉ bắn khi trạng thái license thật sự đổi (`LOCAL_LICENSE_UNACTIVATED`/`LOCAL_LICENSE_INVALID`/`LOCAL_LICENSE_ACTIVE`).
+
+**Machine ID**: `licensing/license_client.py:get_machine_id()` hash SHA-256 từ SMBIOS UUID (fallback MachineGuid nếu rác), khác thuật toán `machine/hardware_id.py` dùng cho `serial`/`uid`. Gọi PowerShell (~1s) nên `licensing/service.py:get_cached_machine_id()` cache 1 lần/tiến trình — lần re-check định kỳ không chạy lại PowerShell trên UI thread.
 
 **Cách ly DB bắt buộc**:
 
 - License chỉ dùng cột `machine_license_key`.
-- `evaluate_local_license()` tính lại Machine ID và trạng thái `active`/`unactivated`/`invalid` mỗi lần gọi, không lưu Machine ID/trạng thái vào DB.
+- `evaluate_local_license()` verify lại chuỗi đã lưu mỗi lần gọi, không lưu Machine ID/trạng thái vào DB.
 - `activate_local_license()` chỉ ghi `machine_license_key` khi verify thành công.
-- `machine_code`, `registration_status`, `license_activated_at` và `local_runtime_status` thuộc luồng đăng ký server; code license tuyệt đối không ghi các cột này.
+- `machine_code`, `registration_status`, `license_activated_at` và `local_runtime_status` thuộc luồng đăng ký server; code license tuyệt đối không ghi các cột này. (`license_activated_at`/`WAITING_LICENSE` là license raw phía server, KHÔNG liên quan license Ed25519 này.)
 
-**Cơ chế**: `licensing/license_client.py:get_machine_id()` hash SHA-256 từ BIOS/SMBIOS UUID (fallback MachineGuid nếu rác), khác thuật toán `machine/hardware_id.py` dùng cho `serial`/`uid`. `verify_license()` dùng public key Ed25519 nhúng sẵn; private key/công cụ ký không nằm trong repo.
+**Dialog**: tab License trong `"Machine Registration"` luôn bật; mở dialog khi license chưa active sẽ vào thẳng tab License. Nút **"Xuất file thông tin máy"** xuất file yêu cầu cấp license theo chuẩn **`AHSO_LICENSE_REQUEST_V1`** (`E:\License-Key-main\CHUAN-JSON-REQUEST.md`): `format`, `machine_id`, `product`, `app_version`, `app_name`, `release_date`, `customer_hint`, `generated_at` (UTC) — tool cấp license nạp thẳng file này. Lỗi ghi file hiện cảnh báo, không crash app.
 
-**Việc gửi `machine_code`+`license_key` lên API server mới** sẽ làm sau khi contract/API sẵn sàng; lần này không sửa hoặc thêm API server.
-
-**Nút "Xuất file thông tin máy"** (`pushButtonExportMachineInfo` → `on_export_machine_info_clicked` → `licensing/service.py:build_machine_info_export()`) — theo yêu cầu user: operator KHÔNG cần tự đọc/gõ lại Machine ID hay trao đổi riêng với bên cấp license, chỉ cần xuất 1 file JSON (qua `QFileDialog`) rồi gửi nguyên file đó. File gồm `machine_id`, `app_version`, `app_release_date`, `app_product`, `local_db_version`, `exported_at`. **KHÔNG có `hostname`** (tạm bỏ theo yêu cầu — giá trị dễ đổi, không phải định danh ổn định như `machine_id`, không nên dùng để phân biệt máy). **Lưu ý**: License-Key-main KHÔNG định nghĩa sẵn format file "machine info export" nào (khác hẳn API cũ của Samsung server, có contract `license-export`/`license/import` rõ ràng) — cấu trúc JSON này do dự án tự thiết kế dựa trên các field hợp lý sẵn có, cần đối chiếu lại với đúng tool bên cấp license đang dùng để import (có thể cần đổi tên field cho khớp).
-
-**`APP_PRODUCT`** (như `APP_VERSION`/`APP_RELEASE_DATE`) sống ở `ui/main_window.py` (không phải file `licensing/` riêng — đã gộp về 1 chỗ cho dễ tìm, cả 3 đều là "cấu hình bắt buộc trước khi build" theo `E:\License-Key-main\INTEGRATION.md` mục 3). `ui/register_window.py` nhận cả 3 giá trị qua tham số constructor (`app_version`/`app_release_date`/`app_product`), không tự import — giống hệt cách `APP_VERSION`/`APP_RELEASE_DATE` đã làm, tránh vòng lặp import với `main_window.py`.
+**Việc gửi `machine_code`+`license_key` lên API server** vẫn để giai đoạn sau; không sửa API server.
 
 **Dependency đóng gói của license**: `pynacl` dùng để verify Ed25519 và kéo
 `cffi` theo dependency. `hook-nacl.py` tự gom `nacl/_sodium.pyd` nhưng không

@@ -30,12 +30,12 @@
 - **File**: `ui/main_window.py:_handle_identity_status_result`, `_apply_runtime_status`. Gọi ngay lúc mở app + định kỳ 15s **chỉ khi chưa READY** (dừng hẳn khi đã READY — không cần hỏi lại liên tục khi đã ổn).
 - **Ghi chú**: điều khiển trực tiếp `local_runtime_status` → banner `labelRuntimeBanner` + khoá input scan + **chặn dữ liệu thật** ở `on_data_received` (không chỉ disable widget, vì disable không ngăn được reader gửi data qua signal).
 
-### Kích hoạt license cục bộ (tính năng phụ, đang bypass)
+### Kích hoạt license cục bộ (gate quét thứ 2)
 
-- **Trạng thái**: code được giữ lại nhưng **không phải gate** và không ảnh hưởng luồng đăng ký/scan. Tab License hiện tạm disable bằng `LICENSE_TAB_ENABLED = False`; tab Registration vẫn hoạt động bình thường.
-- **File**: tab License trong `ui/register_window.py`/`.ui`, dùng `licensing/service.py` và `licensing/license_client.py`. Không xoá code license; chỉ bật lại flag khi tính năng được đưa vào sử dụng.
+- **Trạng thái**: license Ed25519 offline là **gate quét** song song với gate đăng ký server — thiếu/không hợp lệ thì chặn quét, không ảnh hưởng đăng ký/sync. Chi tiết ở `docs/dev.md` mục 11.
+- **File**: tab License trong `ui/register_window.py`/`.ui`, dùng `licensing/service.py`, `licensing/license_client.py`, `licensing/license_request.py`; thông tin release ở `app_info.py`. Không gọi API server nào.
 - **DB contract**: chỉ đọc/ghi `local_app_settings.machine_license_key`. Machine ID và trạng thái `active`/`unactivated`/`invalid` được tính lại khi mở hoặc refresh tab; tuyệt đối không ghi `machine_code`, `registration_status`, `license_activated_at` hay `local_runtime_status`.
-- **Lý do bypass**: chưa có license thật từ bên giữ private key/công cụ ký để validation trên máy thật. API gửi `machine_code`+`license_key` lên server vẫn để dành cho giai đoạn sau; không thay đổi API server trong lần này.
+- API gửi `machine_code`+`license_key` lên server vẫn để dành cho giai đoạn sau; không thay đổi API server.
 
 ### `GET /api/machines/config`
 

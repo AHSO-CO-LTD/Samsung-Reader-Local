@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from app_info import APP_VERSION
 from app_logger import log_event
 from data.duplicate_key import compute_duplicate_key
 from data.mapping_store import load_mappings
@@ -51,6 +52,8 @@ from db.local_db import (
     save_command_received,
     update_app_settings,
 )
+from licensing.messages import describe_why
+from licensing.service import evaluate_local_license
 from machine.identity import ensure_machine_identity
 from reader.reader_bridge import ReaderManager
 from reader.reader_store import (
@@ -121,6 +124,9 @@ STATUS_COLORS = {
 SERVER_HEALTH_CHECK_INTERVAL_MS = 5000
 PLC_HEALTH_CHECK_INTERVAL_MS = 5000
 IDENTITY_STATUS_POLL_INTERVAL_MS = 15000
+# Re-check license định kỳ để bắt license trial hết hạn khi app chạy liên
+# tục nhiều ngày (Machine ID đã cache nên mỗi lần chỉ tốn 1 query DB + verify).
+LICENSE_RECHECK_INTERVAL_MS = 60 * 60 * 1000
 
 SERVER_STATUS_LABELS = {
     True: "Server: Đã kết nối",
@@ -184,6 +190,13 @@ RUNTIME_BANNER_STYLES = {
     "_default": "background-color: #9e9e9e; color: white;",
 }
 
+# Banner khi license chưa active — ưu tiên hơn banner runtime vì operator
+# phải kích hoạt license trước, bất kể trạng thái đăng ký server.
+LICENSE_BANNER_STYLES = {
+    "unactivated": "background-color: #f57c00; color: white;",
+    "invalid": "background-color: #c62828; color: white;",
+}
+
 # Gộp lại vì bị lặp 5 chỗ literal tiếng Anh trước khi dịch.
 MESSAGE_MACHINE_READY = "Máy đã sẵn sàng."
 
@@ -199,18 +212,6 @@ NOTIFICATION_SEVERITY_TEXT_COLORS = {
     "CRITICAL": "#FF3B30",
     "_default": "#D8E9E4",  # màu chữ mặc định giống log cũ
 }
-
-APP_VERSION = "0.8.2"
-# Ngày PHÁT HÀNH bản build này (không phải hôm nay) — dùng để check cửa sổ
-# update_until của license (xem licensing/license_client.py:verify_license).
-# Cập nhật thủ công mỗi lần release thật, không tự tính date.today().
-APP_RELEASE_DATE = ""
-# Mã sản phẩm đối chiếu với lic["product"] khi verify license (check
-# "sai_san_pham") — để None để BỎ QUA check này. Cần thống nhất giá trị thật
-# với bên giữ công cụ ký license nếu họ có gắn "product" vào license phát
-# hành cho dự án này. Đặt cạnh APP_VERSION/APP_RELEASE_DATE cho dễ tìm — cả 3
-# đều là cấu hình bắt buộc trước khi build (xem E:\License-Key-main\INTEGRATION.md mục 3).
-APP_PRODUCT = "Samsung Reader Local"
 
 RESULT_STYLE = {
     # "" (không set gì) -> tự rơi về đúng style mặc định của
@@ -531,6 +532,13 @@ class MainWindow(QMainWindow):
         # Fail-closed: chặn scan cho tới khi có bằng chứng READY từ server —
         # đây là gate THẬT (xem on_data_received), disable widget chỉ là UX.
         self._scan_blocked = True
+        # Gate license — chạy song song với gate runtime ở trên: chỉ quét
+        # được khi CẢ HAI cùng cho phép (xem _apply_scan_gate). Fail-closed
+        # tới khi _refresh_license_state() verify xong.
+        self._runtime_message = None
+        self._license_active = False
+        self._license_state = None
+        self._license_message = ""
         self._serial = None
         self._uid = None
         # True sau khi heartbeat đã start lần đầu (ngay sau config thành
@@ -604,6 +612,9 @@ class MainWindow(QMainWindow):
         self._load_mappings()
         self._load_persisted_readers()
         self._update_progress()
+        # TRƯỚC _init_server_worker — lần _apply_runtime_status() đầu tiên
+        # trong đó cần biết trạng thái license để dựng đúng banner/gate.
+        self._init_license_gate()
         self._init_server_worker()
         self._init_plc_worker()
 
@@ -1676,8 +1687,9 @@ class MainWindow(QMainWindow):
         trạng thái THẬT SỰ đổi so với lần trước (như _apply_server_online)."""
         changed = self._runtime_status != status
         self._runtime_status = status
-        scan_enabled = status in SCAN_ENABLED_STATUSES
-        self._scan_blocked = not scan_enabled
+        self._runtime_message = message
+        runtime_enabled = status in SCAN_ENABLED_STATUSES
+        self._apply_scan_gate()
 
         # Kích hoạt kênh Socket.IO /machine-runtime ĐÚNG 1 LẦN/lần chạy app
         # — cố ý đặt TRƯỚC "if not changed: return" bên dưới, KHÔNG dựa vào
@@ -1693,31 +1705,7 @@ class MainWindow(QMainWindow):
             self._runtime_session_started = True
             self._start_machine_runtime_session()
 
-        for widget in (
-            self.comboBoxChassisRear,
-            self.spinBoxLedBar1Count,
-            self.spinBoxLedBar2Count,
-            self.spinBoxQrBottomCount,
-            self.pushButtonReset,
-        ):
-            widget.setEnabled(scan_enabled)
-
-        # Vòng lặp trên vừa mở khoá spinBoxLedBar2Count vô điều kiện — nếu
-        # profile hiện tại không có Code LED 2, phải khoá lại ngay, không thì
-        # BLOCKED -> READY sẽ mở nhầm cột 2 dù profile không cần nó.
-        if scan_enabled:
-            self._apply_ledbar2_lock(self._current_entry())
-
-        self.labelRuntimeBanner.setVisible(not scan_enabled)
-        if not scan_enabled:
-            self.labelRuntimeBanner.setText(
-                message or RUNTIME_BANNER_TEXT.get(status, status)
-            )
-            self.labelRuntimeBanner.setStyleSheet(
-                RUNTIME_BANNER_STYLES.get(status, RUNTIME_BANNER_STYLES["_default"])
-            )
-
-        if scan_enabled:
+        if runtime_enabled:
             self._identity_status_timer.stop()
         elif self._serial and self._uid and not self._identity_status_timer.isActive():
             self._identity_status_timer.start()
@@ -1754,6 +1742,95 @@ class MainWindow(QMainWindow):
                 "Máy đã được duyệt",
                 message or "Máy đã sẵn sàng hoạt động.",
             )
+
+    def _apply_scan_gate(self):
+        """Gate quét = runtime (đăng ký server) AND license. Điểm DUY NHẤT set
+        self._scan_blocked, enable/disable input và dựng labelRuntimeBanner —
+        gọi lại mỗi khi 1 trong 2 phía đổi trạng thái."""
+        runtime_enabled = self._runtime_status in SCAN_ENABLED_STATUSES
+        scan_enabled = runtime_enabled and self._license_active
+        self._scan_blocked = not scan_enabled
+
+        for widget in (
+            self.comboBoxChassisRear,
+            self.spinBoxLedBar1Count,
+            self.spinBoxLedBar2Count,
+            self.spinBoxQrBottomCount,
+            self.pushButtonReset,
+        ):
+            widget.setEnabled(scan_enabled)
+
+        # Vòng lặp trên vừa mở khoá spinBoxLedBar2Count vô điều kiện — nếu
+        # profile hiện tại không có Code LED 2, phải khoá lại ngay, không thì
+        # BLOCKED -> READY sẽ mở nhầm cột 2 dù profile không cần nó.
+        if scan_enabled:
+            self._apply_ledbar2_lock(self._current_entry())
+
+        self.labelRuntimeBanner.setVisible(not scan_enabled)
+        if scan_enabled:
+            return
+        if not self._license_active:
+            self.labelRuntimeBanner.setText(self._license_message)
+            self.labelRuntimeBanner.setStyleSheet(
+                LICENSE_BANNER_STYLES.get(self._license_state, RUNTIME_BANNER_STYLES["_default"])
+            )
+        else:
+            status = self._runtime_status
+            self.labelRuntimeBanner.setText(
+                self._runtime_message or RUNTIME_BANNER_TEXT.get(status, str(status))
+            )
+            self.labelRuntimeBanner.setStyleSheet(
+                RUNTIME_BANNER_STYLES.get(status, RUNTIME_BANNER_STYLES["_default"])
+            )
+
+    ######################################################################
+    # License cục bộ (offline, Ed25519) — gate quét độc lập với đăng ký server
+    ######################################################################
+
+    def _init_license_gate(self):
+        self._refresh_license_state(apply_gate=False)
+        self._license_recheck_timer = QTimer(self)
+        self._license_recheck_timer.setInterval(LICENSE_RECHECK_INTERVAL_MS)
+        self._license_recheck_timer.timeout.connect(self._refresh_license_state)
+        self._license_recheck_timer.start()
+
+    def _refresh_license_state(self, apply_gate=True):
+        """Verify lại license đã lưu. Chỉ log/bắn notification khi trạng thái
+        THẬT SỰ đổi. KHÔNG ghi vào local_runtime_status hay các cột đăng ký —
+        license chỉ tác động gate quét qua self._license_active."""
+        result = evaluate_local_license()
+        state = result["state"]
+        previous = self._license_state
+        self._license_state = state
+        self._license_active = state == "active"
+        if self._license_active:
+            self._license_message = ""
+        else:
+            self._license_message = (
+                f"License: {describe_why(result['why'])} "
+                "Vào Register > tab License để kích hoạt."
+            )
+
+        if previous != state:
+            self._append_log(
+                f"[{self._now()}] [License] Trạng thái: {state} ({result['why'] or 'OK'})."
+            )
+            # previous None = lần kiểm tra đầu lúc khởi động: chỉ báo khi
+            # license có vấn đề, không báo "đã active" mỗi lần mở app.
+            if self._license_active and previous is not None:
+                add_local_notification(
+                    "LOCAL_LICENSE_ACTIVE", "INFO",
+                    "License hợp lệ", "Máy đã được kích hoạt license.",
+                )
+            elif not self._license_active:
+                add_local_notification(
+                    "LOCAL_LICENSE_INVALID" if state == "invalid" else "LOCAL_LICENSE_UNACTIVATED",
+                    "ERROR" if state == "invalid" else "WARNING",
+                    "License chưa hợp lệ", self._license_message,
+                )
+
+        if apply_gate:
+            self._apply_scan_gate()
 
     def _start_machine_runtime_session(self):
         """Gọi đúng 1 lần (xem điểm gọi ở _apply_runtime_status) — kích hoạt
@@ -1870,12 +1947,11 @@ class MainWindow(QMainWindow):
     def on_register_clicked(self):
         dlg = RegisterWindow(
             self.server_worker,
-            app_version=APP_VERSION,
-            app_release_date=APP_RELEASE_DATE,
-            app_product=APP_PRODUCT,
             on_sync_now=lambda: self._maybe_start_sync_batch("MANUAL"),
             on_check_data=lambda: self._start_reconcile_check(manual=True),
             on_sync_profile=lambda: self._check_machine_config(),
+            on_license_changed=self._refresh_license_state,
+            open_license_tab=not self._license_active,
             parent=self,
         )
         dlg.exec_()
@@ -2421,7 +2497,9 @@ class MainWindow(QMainWindow):
         return any(self._reader_is_master(n) for n in self.manager.names())
 
     def on_data_received(self, name, text):
-        if self._scan_blocked:
+        # Kiểm tra license tường minh ngoài _scan_blocked — SDK khuyên rải
+        # nhiều điểm verify, gỡ 1 điểm không đủ để mở khoá quét.
+        if self._scan_blocked or not self._license_active:
             return
 
         if (
@@ -2854,6 +2932,13 @@ class MainWindow(QMainWindow):
         # _on_master_fill_timeout() gọi hàm này ở cuối (.stop() trên 1
         # singleShot QTimer đã bắn rồi là no-op an toàn).
         self._master_fill_timeout_timer.stop()
+
+        # License có thể hết hạn giữa phiên (re-check định kỳ) — không ghi
+        # bản ghi mới khi license không còn hợp lệ.
+        if not self._license_active:
+            self._append_log(f"[{self._now()}] [License] Bỏ chốt phiên: license không hợp lệ.")
+            self._clear_session()
+            return
 
         qr = self._session_qr
         if qr is None:

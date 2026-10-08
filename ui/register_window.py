@@ -1,10 +1,9 @@
-import json
 import os
 from datetime import datetime
 
 from PyQt5 import uic
 from PyQt5.QtCore import QTimer
-from PyQt5.QtWidgets import QApplication, QDialog, QFileDialog
+from PyQt5.QtWidgets import QApplication, QDialog, QFileDialog, QMessageBox
 
 from app_logger import log_event
 from db.local_db import (
@@ -14,7 +13,8 @@ from db.local_db import (
     update_app_settings,
 )
 from licensing.messages import describe_why
-from licensing.service import activate_local_license, build_machine_info_export, evaluate_local_license
+from licensing.license_request import save_license_request
+from licensing.service import activate_local_license, build_machine_license_request, evaluate_local_license
 from machine.identity import ensure_machine_identity
 from app_paths import get_bundle_dir
 
@@ -23,7 +23,6 @@ UI_PATH = os.path.join(get_bundle_dir(), "ui", "register_window.ui")
 MAX_LOG_LINES = 500
 
 STATUS_POLL_INTERVAL_MS = 12000
-LICENSE_TAB_ENABLED = False
 
 # Riêng biệt với STATUS_POLL_INTERVAL_MS (chỉ chạy khi PENDING_LICENSE/
 # PENDING_APPROVAL) — pending sync cần cập nhật bất kể trạng thái đăng ký gì,
@@ -70,23 +69,21 @@ LICENSE_STATUS_STYLES = {
 
 
 class RegisterWindow(QDialog):
-    """Dialog đăng ký máy với server, kèm tab license cục bộ độc lập."""
+    """Dialog đăng ký máy với server, kèm tab license cục bộ. License là gate
+    quét riêng (xem MainWindow._refresh_license_state), không ghi vào các cột
+    của luồng đăng ký."""
 
-    def __init__(self, server_worker, app_version, app_release_date, app_product=None,
-                 on_sync_now=None, on_check_data=None, on_sync_profile=None, parent=None):
+    def __init__(self, server_worker, on_sync_now=None, on_check_data=None,
+                 on_sync_profile=None, on_license_changed=None,
+                 open_license_tab=False, parent=None):
         super().__init__(parent)
         uic.loadUi(UI_PATH, self)
-        self.tabWidgetMain.setTabEnabled(
-            self.tabWidgetMain.indexOf(self.tabLicense), LICENSE_TAB_ENABLED
-        )
+        if open_license_tab:
+            self.tabWidgetMain.setCurrentWidget(self.tabLicense)
 
         self.server_worker = server_worker
         self.server_worker.callSucceeded.connect(self._on_call_succeeded)
         self.server_worker.callFailed.connect(self._on_call_failed)
-
-        self._app_version = app_version
-        self._app_release_date = app_release_date
-        self._app_product = app_product
 
         # Callback do MainWindow truyền vào (thường là
         # lambda: self._maybe_start_sync_batch("MANUAL") /
@@ -97,6 +94,9 @@ class RegisterWindow(QDialog):
         self._on_sync_now = on_sync_now
         self._on_check_data = on_check_data
         self._on_sync_profile = on_sync_profile
+        # MainWindow tính lại gate quét ngay sau khi kích hoạt thành công,
+        # không phải chờ tới lần re-check định kỳ.
+        self._on_license_changed = on_license_changed
 
         # Tab Registration.
         self.pushButtonSendRequest.clicked.connect(self.on_send_request_clicked)
@@ -253,7 +253,7 @@ class RegisterWindow(QDialog):
     ######################################################################
 
     def _refresh_license_view(self):
-        result = evaluate_local_license(self._app_version, self._app_release_date, self._app_product)
+        result = evaluate_local_license()
         state = result["state"]
 
         self.lineEditMachineId.setText(result["machine_id"] or "(unavailable)")
@@ -282,18 +282,21 @@ class RegisterWindow(QDialog):
         self._append_log("Đã copy Machine ID vào clipboard.")
 
     def on_export_machine_info_clicked(self):
-        """Xuất 1 file JSON gói đủ thông tin bên cấp license cần (Machine ID +
-        version/release date/product hiện tại của app) — operator chỉ cần gửi
-        file này, không cần tự đọc/gõ lại Machine ID hay trao đổi thêm gì."""
-        info = build_machine_info_export(self._app_version, self._app_release_date, self._app_product)
-        default_name = f"machine_info_{info['machine_id']}.json"
+        """Xuất file yêu cầu cấp license (chuẩn AHSO_LICENSE_REQUEST_V1) —
+        operator chỉ cần gửi file này, tool cấp license tự nạp vào form."""
+        request = build_machine_license_request()
+        default_name = f"license_request_{request['machine_id']}.json"
         path, _ = QFileDialog.getSaveFileName(
             self, "Xuất thông tin máy", default_name, "JSON Files (*.json)"
         )
         if not path:
             return
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(info, f, indent=2, ensure_ascii=False)
+        try:
+            save_license_request(path, request)
+        except OSError as exc:
+            self._append_log(f"Xuất file thông tin máy thất bại: {exc}")
+            QMessageBox.warning(self, "Xuất thông tin máy", f"Không ghi được file:\n{exc}")
+            return
         self._append_log(f"Đã xuất file thông tin máy: {path}")
 
     ######################################################################
@@ -308,7 +311,7 @@ class RegisterWindow(QDialog):
 
         self.pushButtonActivate.setEnabled(False)
         try:
-            result = activate_local_license(lic_str, self._app_version, self._app_release_date, self._app_product)
+            result = activate_local_license(lic_str)
         finally:
             self.pushButtonActivate.setEnabled(True)
 
@@ -323,6 +326,8 @@ class RegisterWindow(QDialog):
             self._append_log(f"Kích hoạt thất bại: {message}")
 
         self._refresh_license_view()
+        if result["ok"] and self._on_license_changed is not None:
+            self._on_license_changed()
 
     ######################################################################
     # Data Sync (POST /api/sync/batches/submit + sync/reconcile/* — logic
